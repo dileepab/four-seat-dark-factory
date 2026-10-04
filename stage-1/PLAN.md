@@ -11,8 +11,8 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | ACCEPTED (PASS + APPROVED @ 2455a8d, suite 78bab0a; REVIEW.md bac1342) | 2455a8d |
-| W4 | builder | Settlements | HANDED_OFF (D37 fix; earlier PASS @ e143cf1 withdrawn) | 484349f |
-| W5 | builder | Export and import | HANDED_OFF (with W4 fix; earlier PASS @ 295378c withdrawn) | 484349f |
+| W4 | builder | Settlements | VERIFIED (PASS @ 484349f, suite cb41642); awaiting critic | 484349f |
+| W5 | builder | Export and import | VERIFIED (PASS @ 484349f, suite cb41642); awaiting critic | 484349f |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
@@ -469,4 +469,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z; critic BLOCKED 08:00Z (S18; planner chose plan 3.10 order, D37) | blocked |
 | HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | verifier PASS 07:54Z; final check (isolated, main repo @ 720e1c5) claimed stage 1 | awaiting critic |
 | Liveness resend to critic: W3, W4, W5 reviews (no acknowledgement for 20 min) | critic | 07:50Z | critic 07:53Z: all three started; W3 and W4 each have a finding | acknowledged |
-| HANDOFF W4 (fix, D37) + W5 @ 484349f (builder) | verifier, critic | 08:10Z | — | awaiting verifier run |
+| HANDOFF W4 (fix, D37) + W5 @ 484349f (builder) | verifier, critic | 08:10Z | verifier PASS W4+W5 08:19Z; final check (isolated, main @ 49c151d) claimed stage 1 | awaiting critic |
