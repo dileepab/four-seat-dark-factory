@@ -1,14 +1,17 @@
-"""Shared helpers for the stage-1 acceptance suite.
+"""Shared helpers for the stage-2 acceptance suite.
 
-Owned by the verifier. Written from the specification
-(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md`) and `stage-1/PLAN.md` only,
-never from the implementation. Everything here talks to the service over HTTP.
+Owned by the verifier. Written from the specifications
+(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md` and `stage-2.md`) and
+`stage-2/PLAN.md` only, never from the implementation. Everything here talks to the
+service over HTTP.
 
 Invariant tracking: a `Service` remembers the total seeded by the last accepted
 reset (or carried by the last accepted import) and every account it knows. After
-each test the `svc` fixture asserts I1 (conservation) and I2 (no negative balance)
-over those accounts, and `Service.burst` asserts I2 on reads taken *during* a burst
-and I1 right after it.
+each test the `svc` fixture asserts, over those accounts, I1 (the `total`s sum to the
+seeded total), I2 (no negative `total`, `available` or `held`; `held <= total`) and I30
+(`balance == total`, `available == total - held`, `held` = the open outgoing
+remainders). `Service.burst` asserts I2 on reads taken *during* a burst and I1 right
+after it.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import httpx
@@ -130,6 +133,34 @@ class Api:
     def requests(self, **params) -> list[dict]:
         return _all_pages(self, "/requests", "requests", params)
 
+    # stage 2: authorizations
+    def authorize(self, to_handle: str, amount: Any, *, key: str | None = None, **extra) -> httpx.Response:
+        body = {"to_handle": to_handle, "amount": amount, **extra}
+        return self.post("/authorizations", json=body, key=key or new_key())
+
+    def capture(self, authorization_id: str, body: Any = None, *, key: str | None = None) -> httpx.Response:
+        """POST /authorizations/{id}/capture; the body defaults to `{}` (capture the remainder)."""
+        return self.post(f"/authorizations/{authorization_id}/capture",
+                         json={} if body is None else body, key=key or new_key())
+
+    def void(self, authorization_id: str) -> httpx.Response:
+        return self.post(f"/authorizations/{authorization_id}/void")
+
+    def auths(self, **params) -> list[dict]:
+        """Every authorization visible to this caller, newest first, following pages."""
+        return _all_pages(self, "/authorizations", "authorizations", params)
+
+    def auth(self, authorization_id: str) -> dict:
+        """One authorization as GET /authorizations shows it to this caller."""
+        found = [a for a in self.auths() if a["authorization_id"] == authorization_id]
+        assert len(found) == 1, f"{authorization_id} appears {len(found)} times in the caller's list"
+        return found[0]
+
+    def money(self) -> tuple[int, int, int]:
+        """(total, available, held) from GET /me."""
+        m = self.me()
+        return m["total"], m["available"], m["held"]
+
 
 def _all_pages(client: Api, path: str, field: str, params: dict) -> list[dict]:
     out: list[dict] = []
@@ -220,17 +251,24 @@ def no_failures(results: list) -> None:
 
 # ---------------------------------------------------------------- representations
 
-ME_KEYS = {"user_id", "display_name", "handle", "balance", "currency", "minor_units"}
+ME_KEYS = {"user_id", "display_name", "handle", "balance", "total", "available", "held",
+           "currency", "minor_units"}
 AUTH_KEYS = {"user_id", "display_name", "token"}
 PAYMENT_KEYS = {"payment_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
                 "amount", "currency", "note", "visibility", "request_id",
-                "settlement_id", "created_at"}
+                "settlement_id", "authorization_id", "created_at"}
+# D54: a replayed stage-1 body is returned verbatim, so it has no authorization_id.
+STAGE1_PAYMENT_KEYS = PAYMENT_KEYS - {"authorization_id"}
 REQUEST_KEYS = {"request_id", "requester_id", "requester_handle", "payer_id",
                 "payer_handle", "amount", "currency", "note", "status", "payment_id",
                 "created_at"}
 SPLIT_KEYS = {"split_id", "amount", "currency", "note", "shares", "requests", "created_at"}
 SETTLEMENT_KEYS = {"settlement_id", "committed_at", "payments"}
 STATUSES = {"pending", "paid", "declined", "cancelled"}
+AUTHZ_KEYS = {"authorization_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
+              "amount", "captured_amount", "remaining_amount", "currency", "note", "visibility",
+              "status", "expires_at", "payment_id", "payment_ids", "created_at"}
+AUTHZ_STATUSES = {"open", "captured", "voided", "expired"}
 
 # §3.4: RFC 3339 with an explicit numeric offset.
 RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}:\d{2}$")
@@ -257,9 +295,19 @@ def check_me(m: dict) -> dict:
     check_id(m["user_id"], "user_id")
     assert isinstance(m["display_name"], str)
     assert isinstance(m["handle"], str) and HANDLE.match(m["handle"]), m
-    assert is_int(m["balance"]) and m["balance"] >= 0, m
+    check_money(m)
     assert isinstance(m["currency"], str)
     assert m["minor_units"] in (0, 2, 3) and is_int(m["minor_units"]), m
+    return m
+
+
+def check_money(m: dict) -> dict:
+    """I2 and I30 on one GET /me body."""
+    for k in ("balance", "total", "available", "held"):
+        assert is_int(m[k]) and m[k] >= 0, f"I2: {k} must be a non-negative integer: {m}"
+    assert m["balance"] == m["total"], f"I30: balance must equal total: {m}"
+    assert m["available"] == m["total"] - m["held"], f"I30: available must be total - held: {m}"
+    assert m["held"] <= m["total"], f"I2: held must not exceed total: {m}"
     return m
 
 
@@ -278,10 +326,43 @@ def check_payment(p: dict, **want) -> dict:
         check_id(p["request_id"], "request_id")
     if p["settlement_id"] is not None:
         check_id(p["settlement_id"], "settlement_id")
+    if p["authorization_id"] is not None:
+        check_id(p["authorization_id"], "authorization_id")
     ts(p["created_at"])
     for k, v in want.items():
         assert p[k] == v, f"payment {k}: expected {v!r}, got {p[k]!r} in {p}"
     return p
+
+
+def check_authorization(a: dict, **want) -> dict:
+    """PLAN 3.6: exactly the authorization fields, with the remainder rules of I33."""
+    assert isinstance(a, dict) and set(a) == AUTHZ_KEYS, \
+        f"authorization keys: {sorted(a) if isinstance(a, dict) else a!r}"
+    check_id(a["authorization_id"], "authorization_id")
+    check_id(a["from_user_id"], "from_user_id")
+    check_id(a["to_user_id"], "to_user_id")
+    assert a["from_user_id"] != a["to_user_id"], a
+    assert isinstance(a["from_handle"], str) and isinstance(a["to_handle"], str)
+    for k in ("amount", "captured_amount", "remaining_amount"):
+        assert is_int(a[k]) and 0 <= a[k] <= MAX_AMOUNT, f"{k}: {a}"
+    assert a["captured_amount"] <= a["amount"], f"I32: captured above amount: {a}"
+    assert a["status"] in AUTHZ_STATUSES, a
+    if a["status"] == "open":
+        assert a["remaining_amount"] == a["amount"] - a["captured_amount"], f"I33 while open: {a}"
+    else:
+        assert a["remaining_amount"] == 0, f"I33: a closed authorization holds nothing: {a}"
+    assert isinstance(a["currency"], str) and isinstance(a["note"], str)
+    assert a["visibility"] in ("public", "private"), a
+    assert isinstance(a["expires_at"], str), a
+    assert isinstance(a["payment_ids"], list), a
+    for pid in a["payment_ids"]:
+        check_id(pid, "payment_ids entry")
+    assert a["payment_id"] == (a["payment_ids"][-1] if a["payment_ids"] else None), \
+        f"payment_id must be the last of payment_ids: {a}"
+    ts(a["created_at"])
+    for k, v in want.items():
+        assert a[k] == v, f"authorization {k}: expected {v!r}, got {a[k]!r} in {a}"
+    return a
 
 
 def check_request(r: dict, **want) -> dict:
@@ -339,7 +420,8 @@ def standard_users() -> list[dict]:
 
 def fixture(users: list[dict] | None = None, *, currency: str = "EUR",
             minor_units: int | None = None, payments: list[dict] | None = None,
-            requests: list[dict] | None = None, operators: list[str] | None = None) -> dict:
+            requests: list[dict] | None = None, operators: list[str] | None = None,
+            authorizations: list[dict] | None = None, ttl: Any = _UNSET) -> dict:
     fx: dict[str, Any] = {
         "currency": currency,
         "minor_units": CURRENCIES.get(currency, 2) if minor_units is None else minor_units,
@@ -349,7 +431,28 @@ def fixture(users: list[dict] | None = None, *, currency: str = "EUR",
     }
     if operators is not None:
         fx["settlement_operator_ids"] = operators
+    if authorizations is not None:
+        fx["authorizations"] = authorizations
+    if ttl is not _UNSET:
+        fx["authorization_ttl_seconds"] = ttl
     return fx
+
+
+def iso(dt: datetime) -> str:
+    """A UTC instant in the plan's timestamp form."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
+        f"{dt.microsecond // 1000:03d}+00:00"
+
+
+def hours_from_now(h: float) -> str:
+    """An RFC 3339 instant h hours from the wall clock (negative: in the past)."""
+    return iso(datetime.now(timezone.utc) + timedelta(hours=h))
+
+
+def seeded_auth(aid: str, frm: str, to: str, amount: int, *, hours: float = 2.0, **extra) -> dict:
+    """A fixture authorization; `hours` from now to expires_at (seeds are at least an hour away)."""
+    return {"id": aid, "from_user_id": f"u_{frm}", "to_user_id": f"u_{to}", "amount": amount,
+            "expires_at": hours_from_now(hours), **extra}
 
 
 def equal_split(amount: int, n: int) -> list[int]:
@@ -466,15 +569,40 @@ class Service:
     def balances(self) -> dict[str, int]:
         return {h: self.client(h).balance() for h in self.accounts}
 
-    def assert_invariants(self, where: str = "") -> None:
-        """I1 and I2 over every tracked account."""
+    def held_matches_open_holds(self, handle: str, where: str = "") -> None:
+        """I30: held = the remainders of the caller's open outgoing authorizations.
+
+        An authorization can expire between the reads, so the list is read before and
+        after GET /me and compared only when both lists agree.
+        """
+        c = self.client(handle)
+        for _ in range(4):
+            first = c.auths(direction="outgoing", status="open")
+            me = c.me()
+            second = c.auths(direction="outgoing", status="open")
+            if first == second:
+                held = sum(a["remaining_amount"] for a in first)
+                assert me["held"] == held, \
+                    f"I30 violated{where} on {self.name}: {handle} held {me['held']} != open remainders {held}"
+                return
+        raise AssertionError(f"open outgoing authorizations of {handle} kept changing{where}")
+
+    def assert_invariants(self, where: str = "", *, holds: bool = True) -> None:
+        """I1, I2 and I30 over every tracked account."""
         if self.total is None or len(self.accounts) > MAX_TRACKED_FOR_CHECK:
             return
-        bal = self.balances()
-        negative = {h: b for h, b in bal.items() if b < 0}
-        assert not negative, f"I2 violated{where} on {self.name}: negative balances {negative}"
-        assert sum(bal.values()) == self.total, \
-            f"I1 violated{where} on {self.name}: sum {sum(bal.values())} != seeded {self.total}; {bal}"
+        mes = {h: self.client(h).me() for h in self.accounts}
+        for h, m in mes.items():
+            try:
+                check_money(m)
+            except AssertionError as exc:
+                raise AssertionError(f"{exc}{where} on {self.name} for {h}") from None
+        totals = {h: m["total"] for h, m in mes.items()}
+        assert sum(totals.values()) == self.total, \
+            f"I1 violated{where} on {self.name}: sum {sum(totals.values())} != seeded {self.total}; {totals}"
+        if holds:
+            for h in self.accounts:
+                self.held_matches_open_holds(h, where)
 
     def burst(self, fn: Callable[[int], Any], n: int, *, watch: bool = True,
               timeout: float = 60.0) -> list:
@@ -504,9 +632,15 @@ class Service:
                     for h, c in clients:
                         try:
                             r = c.get("/me")
-                            if r.status_code == 200 and r.json()["balance"] < 0:
-                                seen_negative.append((h, r.json()["balance"]))
-                            elif r.status_code != 200:
+                            if r.status_code == 200:
+                                m = r.json()
+                                bad = [k for k in ("balance", "total", "available", "held")
+                                       if not isinstance(m.get(k), int) or m[k] < 0]
+                                if bad or m["held"] > m["total"] or m["balance"] != m["total"] \
+                                        or m["available"] != m["total"] - m["held"]:
+                                    seen_negative.append((h, {k: m.get(k) for k in
+                                                              ("total", "available", "held", "balance")}))
+                            else:
                                 watch_errors.append(describe(r))
                         except Exception as exc:  # recorded, then asserted
                             watch_errors.append(repr(exc))
@@ -534,7 +668,7 @@ class Service:
         stop.set()
         if th:
             th.join(timeout=30)
-        assert not seen_negative, f"I2 violated during a burst: {seen_negative[:5]}"
+        assert not seen_negative, f"I2/I30 violated during a burst: {seen_negative[:5]}"
         assert not watch_errors, f"balance reads failed during a burst: {watch_errors[:3]}"
         if watched:
             self.assert_invariants(" after a burst")

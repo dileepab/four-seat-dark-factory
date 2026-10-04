@@ -143,7 +143,8 @@ def test_reset_returns_204_with_no_body_and_seeds_users(svc):
     for u in fx["users"]:
         me = check_me(svc.client(u["handle"]).me())
         assert me == {"user_id": u["id"], "display_name": u["display_name"], "handle": u["handle"],
-                      "balance": u["balance"], "currency": "EUR", "minor_units": 2}
+                      "balance": u["balance"], "total": u["balance"], "available": u["balance"],
+                      "held": 0, "currency": "EUR", "minor_units": 2}
 
 
 def test_seeded_users_log_in_immediately(svc):

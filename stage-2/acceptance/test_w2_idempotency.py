@@ -1,7 +1,8 @@
-"""W2.3 (and the same rules on W3/W4 paths) — idempotency (§7; PLAN 3.5 step 4-6, 3.9, D17).
+"""W2.3 (and the same rules on W3/W4/W7 paths) — idempotency (§7; PLAN 3.5 step 4-6, 3.9, D17;
+stage-2 PLAN 3.9, D61).
 
 I15 replay, I16 key reuse, I17 concurrent first use, I18 failures claim nothing, I19 key scope.
-Every scenario runs on each of the five idempotent write paths; each path carries the work
+Every scenario runs on each of the seven idempotent write paths; each path carries the work
 item that introduces it.
 """
 from __future__ import annotations
@@ -112,12 +113,44 @@ class Settlements(Op):
                 '{"from_handle":"bob","to_handle":"cy","amount":5e1}]}')
 
 
+class Authorizations(Op):
+    name = "authorizations"
+
+    def path(self, ctx): return "/authorizations"
+    def body(self, ctx): return {"to_handle": "bob", "amount": 100, "note": "n", "visibility": "private"}
+    def alt_body(self, ctx): return {"to_handle": "bob", "amount": 100, "note": "n"}
+    def bad_body(self, ctx): return {"to_handle": "bob", "amount": 0}
+    def float_body(self, ctx): return '{"visibility":"private","note":"n","amount":1.0e2,"to_handle":"bob"}'
+
+    def mutate(self, world, ctx, first):
+        expect(world.bob.capture(first["authorization_id"], {"amount": 40}), 201)
+
+
+class Capture(Op):
+    name = "capture"
+    caller = "bob"
+
+    def setup(self, world):
+        return {"aid": expect(world.ada.authorize("bob", 1_000, note="for capture"), 201)["authorization_id"]}
+
+    def path(self, ctx): return f"/authorizations/{ctx['aid']}/capture"
+    def body(self, ctx): return {"amount": 300, "final": False}
+    def alt_body(self, ctx): return {"amount": 300}
+    def bad_body(self, ctx): return {"amount": 0}
+    def float_body(self, ctx): return '{ "final" : false , "amount" : 3E2 }'
+
+    def mutate(self, world, ctx, first):
+        expect(world.ada.void(ctx["aid"]), 200)
+
+
 OPS = [
     pytest.param(Payments(), marks=pytest.mark.item(2), id="payments"),
     pytest.param(Requests(), marks=pytest.mark.item(3), id="requests"),
     pytest.param(Pay(), marks=pytest.mark.item(3), id="pay"),
     pytest.param(Splits(), marks=pytest.mark.item(3), id="splits"),
     pytest.param(Settlements(), marks=pytest.mark.item(4), id="settlements"),
+    pytest.param(Authorizations(), marks=pytest.mark.item(7), id="authorizations"),
+    pytest.param(Capture(), marks=pytest.mark.item(7), id="capture"),
 ]
 
 pytestmark = pytest.mark.item(2)
@@ -128,7 +161,12 @@ def snapshot(world, op) -> dict:
     snap = {h: world.svc.client(h).balance() for h in ("ada", "bob", "cy", "dee")}
     snap["feed"] = sorted(p["payment_id"] for p in world.ada.feed())
     snap["feed_bob"] = sorted(p["payment_id"] for p in world.bob.feed())
-    if op.name != "payments":
+    if op.name in ("authorizations", "capture"):
+        for h in ("ada", "bob"):
+            snap[f"money_{h}"] = world.svc.client(h).money()
+            snap[f"auth_{h}"] = sorted((a["authorization_id"], a["status"], a["captured_amount"])
+                                       for a in world.svc.client(h).auths())
+    elif op.name != "payments":
         for h in ("ada", "bob", "cy"):
             snap[f"req_{h}"] = sorted((r["request_id"], r["status"]) for r in world.svc.client(h).requests())
     return snap
@@ -351,3 +389,22 @@ def test_key_refused_for_funds_pays_once_after_funding(world):
 def test_printable_keys_work(world, key):
     first = expect(world.ada.pay("bob", 3, key=key), 201)
     assert expect(world.ada.pay("bob", 3, key=key), 200) == first
+
+
+@pytest.mark.item(7)
+def test_same_key_on_the_seven_paths_is_independent(world):
+    ada, bob = world.ada, world.bob
+    key = new_key()
+    rq = expect(bob.ask("ada", 10, key=key), 201)["request_id"]
+    expect(ada.pay("bob", 5, key=key), 201)
+    expect(ada.ask("bob", 5, key=key), 201)
+    expect(ada.pay_request(rq, key=key), 201)
+    expect(ada.split(30, ["ada", "bob"], key=key), 201)
+    expect(ada.settle([{"from_handle": "ada", "to_handle": "dee", "amount": 1}], key=key), 201)
+    a1 = expect(ada.authorize("bob", 100, key=key), 201)["authorization_id"]
+    a2 = expect(ada.authorize("bob", 100, key=new_key()), 201)["authorization_id"]
+    p1 = expect(bob.capture(a1, {}, key=key), 201)
+    p2 = expect(bob.capture(a2, {}, key=key), 201)
+    assert p1["authorization_id"] == a1 and p2["authorization_id"] == a2
+    expect(bob.authorize("ada", 100, key=key), 201)
+    assert ada.money() == (10_000 - 5 - 10 - 1 - 200, 10_000 - 5 - 10 - 1 - 200, 0)

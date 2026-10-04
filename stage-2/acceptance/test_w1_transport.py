@@ -21,6 +21,7 @@ W2 = pytest.mark.item(2)
 W3 = pytest.mark.item(3)
 W4 = pytest.mark.item(4)
 W5 = pytest.mark.item(5)
+W7 = pytest.mark.item(7)
 
 
 # ---------------------------------------------------------------- health
@@ -39,7 +40,6 @@ def test_health_ignores_an_invalid_authorization_header(svc):
 @pytest.mark.parametrize("method,path", [
     ("GET", "/nope"),
     ("POST", "/nope"),
-    ("GET", "/"),
     ("DELETE", "/me"),
     ("PUT", "/me"),
     ("POST", "/me"),
@@ -148,9 +148,19 @@ def test_unparseable_login_body_is_400(world, name):
     pytest.param("/requests", marks=W3),
     pytest.param("/splits", marks=W3),
     pytest.param("/settlements", marks=W4),
+    pytest.param("/authorizations", marks=W7),
 ])
 def test_unparseable_body_on_write_paths_is_400(world, path, name):
     expect_error(world.ada.post(path, content=BAD_BODIES[name], key=new_key()), 400, "malformed_request")
+
+
+@pytest.mark.item(7)
+@pytest.mark.parametrize("name", list(BAD_BODIES))
+def test_unparseable_body_on_capture_is_400(world, name):
+    a = expect(world.ada.authorize("bob", 100), 201)
+    expect_error(world.bob.post(f"/authorizations/{a['authorization_id']}/capture", content=BAD_BODIES[name],
+                                key=new_key()), 400, "malformed_request")
+    assert world.ada.money() == (10_000, 9_900, 100)
 
 
 @pytest.mark.item(3)

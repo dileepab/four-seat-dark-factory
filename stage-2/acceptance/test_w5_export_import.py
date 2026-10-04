@@ -447,9 +447,9 @@ def corrupt(snap: Snapshot, how: str):
         assert _remove_record_with_value(body["state"], "zed@example.com"), \
             "no record holds zed's email; this probe cannot run"
         return body
-    if how == "schema 2":
-        assert body["state"].get("schema") == 1, "PLAN 3.12: state carries schema 1"
-        body["state"]["schema"] = 2
+    if how == "schema 3":
+        assert type(body["state"].get("schema")) is int, "PLAN 3.12: the state carries its schema number"
+        body["state"]["schema"] = 3    # stage 2 imports schema 1 and 2 only
         return body
     raise AssertionError(how)
 
@@ -474,7 +474,7 @@ REJECTS = {
     "state only schema": ({"state": {"schema": 1}}, 422, None),
     "negative balance": ("corrupt", 422, None),
     "dangling user": ("corrupt", 422, None),
-    "schema 2": ("corrupt", 422, None),
+    "schema 3": ("corrupt", 422, None),
 }
 
 

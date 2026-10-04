@@ -9,11 +9,11 @@ import re
 import pytest
 
 from support import (AUTH_KEYS, check_id, check_me, expect, expect_error, fixture, new_key,
-                     no_failures, tally, user)
+                     no_failures, seeded_auth, tally, user)
 
 pytestmark = pytest.mark.item(1)
 
-W2, W3, W4, W5 = (pytest.mark.item(n) for n in (2, 3, 4, 5))
+W2, W3, W4, W5, W7 = (pytest.mark.item(n) for n in (2, 3, 4, 5, 7))
 PW = "correct horse"
 
 
@@ -35,7 +35,8 @@ def test_new_user_me_has_derived_handle_zero_balance_and_service_currency(world)
     body = expect(signup(world, "new.user@example.com", display_name="  Ünïcode 😀  "), 201)
     me = check_me(world.svc.api(body["token"]).me())
     assert me == {"user_id": body["user_id"], "display_name": "  Ünïcode 😀  ", "handle": "new_user",
-                  "balance": 0, "currency": "EUR", "minor_units": 2}
+                  "balance": 0, "total": 0, "available": 0, "held": 0, "currency": "EUR",
+                  "minor_units": 2}
 
 
 def test_new_user_in_a_jpy_service_holds_zero_yen(svc):
@@ -245,6 +246,10 @@ ENDPOINTS = [
     pytest.param("POST", "/requests/rq_seed/cancel", marks=W3, id="cancel"),
     pytest.param("POST", "/splits", marks=W3, id="splits"),
     pytest.param("POST", "/settlements", marks=W4, id="settlements"),
+    pytest.param("POST", "/authorizations", marks=W7, id="authorizations-post"),
+    pytest.param("GET", "/authorizations", marks=W7, id="authorizations-get"),
+    pytest.param("POST", "/authorizations/a_seed/capture", marks=W7, id="capture"),
+    pytest.param("POST", "/authorizations/a_seed/void", marks=W7, id="void"),
 ]
 
 BAD_AUTH = {
@@ -261,7 +266,8 @@ BAD_AUTH = {
 @pytest.fixture
 def seeded(svc):
     fx = fixture(operators=["u_ada"], requests=[
-        {"id": "rq_seed", "requester_id": "u_bob", "payer_id": "u_ada", "amount": 100}])
+        {"id": "rq_seed", "requester_id": "u_bob", "payer_id": "u_ada", "amount": 100}],
+        authorizations=[seeded_auth("a_seed", "ada", "bob", 100)])
     svc.must_reset(fx)
     return svc
 
@@ -297,7 +303,8 @@ def test_me_for_every_seeded_user(world):
     for u in world.fixture["users"]:
         me = check_me(world.svc.client(u["handle"]).me())
         assert me == {"user_id": u["id"], "display_name": u["display_name"], "handle": u["handle"],
-                      "balance": u["balance"], "currency": "EUR", "minor_units": 2}
+                      "balance": u["balance"], "total": u["balance"], "available": u["balance"],
+                      "held": 0, "currency": "EUR", "minor_units": 2}
 
 
 # ---------------------------------------------------------------- concurrency (W1.9)
