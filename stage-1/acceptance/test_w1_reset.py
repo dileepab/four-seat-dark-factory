@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import time
 
 import httpx
@@ -111,6 +112,27 @@ def test_invalid_fixture_is_422_and_changes_nothing(world, name):
     assert world.ada.me() == before_me
     assert world.svc.client("keepme").balance() == 0
     expect(world.svc.login("keepme@example.com", "correct horse"), 200)
+
+
+def _nested(depth_inside: int) -> str:
+    return "[" * depth_inside + "]" * depth_inside
+
+
+def test_reset_accepts_exactly_80_levels_of_nesting(world):
+    """PLAN 3.2 (D38): reset takes up to 80 levels; the top-level object is level 1."""
+    body = json.dumps(base_fixture())[:-1] + ', "pad": ' + _nested(79) + "}"
+    resp = httpx.post(f"{world.svc.base_url}/_test/reset", content=body.encode(), timeout=10,
+                      headers={"Content-Type": "application/json"})
+    assert resp.status_code == 204, resp.text[:200]
+    world.svc.must_reset(base_fixture())
+
+
+def test_reset_at_81_levels_is_400_and_changes_nothing(world):
+    body = json.dumps(base_fixture())[:-1] + ', "pad": ' + _nested(80) + "}"
+    resp = httpx.post(f"{world.svc.base_url}/_test/reset", content=body.encode(), timeout=10,
+                      headers={"Content-Type": "application/json"})
+    expect_error(resp, 400, "malformed_request")
+    assert world.ada.balance() == 10_000
 
 
 def test_reset_returns_204_with_no_body_and_seeds_users(svc):

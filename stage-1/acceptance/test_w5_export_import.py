@@ -12,8 +12,8 @@ import json
 import httpx
 import pytest
 
-from support import (Snapshot, expect, expect_error, fixture, new_key, no_failures, standard_users,
-                     ts, user)
+from support import (RFC3339, Snapshot, assert_newest_first, expect, expect_error, fixture, new_key,
+                     no_failures, standard_users, ts, user)
 
 pytestmark = pytest.mark.item(5)
 
@@ -285,22 +285,35 @@ def test_new_ids_never_collide_and_time_moves_forward_after_import(svc, svc_b):
 
 
 def test_export_during_a_burst_is_a_consistent_snapshot(svc, svc_b):
+    """§10 and I26: an export is one point in time. Each imported balance must equal the
+    seeded 1000 plus what that user received minus what it sent, over the imported payments."""
     users = [user(f"b{i}", 1_000) for i in range(10)]
-    svc.must_reset(fixture(users))
-    clients = [svc.fresh_client(f"b{i % 10}") for i in range(49)]
+    for round_ in range(3):
+        svc.must_reset(fixture(users))
+        clients = [svc.fresh_client(f"b{i % 10}") for i in range(49)]
 
-    def go(i):
-        if i == 0:
-            return svc.export()
-        return clients[i - 1].pay(f"b{(i + 3) % 10}", 37)
+        def go(i):
+            if i == 0:
+                return svc.export()
+            return clients[i - 1].pay(f"b{(i + 3) % 10}", 37)
 
-    out = svc.burst(go, 50)
-    snap = out[0]
-    assert isinstance(snap, Snapshot), f"export during the burst failed: {snap!r}"
-    no_failures(out[1:])
-    assert {r.status_code for r in out[1:]} <= {201, 409}
-    expect(svc_b.import_(snap), 204)
-    svc_b.assert_invariants(" in an export taken mid-burst")
+        out = svc.burst(go, 50)
+        snap = out[0]
+        assert isinstance(snap, Snapshot), f"export during the burst failed: {snap!r}"
+        no_failures(out[1:])
+        assert {r.status_code for r in out[1:]} <= {201, 409}
+        expect(svc_b.import_(snap), 204)
+        svc_b.assert_invariants(" in an export taken mid-burst")
+        torn = {}
+        for u in users:
+            h = u["handle"]
+            c = svc_b.client(h)
+            own = [p for p in c.feed() if h in (p["from_handle"], p["to_handle"])]
+            ledger = 1_000 + sum(p["amount"] for p in own if p["to_handle"] == h) \
+                - sum(p["amount"] for p in own if p["from_handle"] == h)
+            if c.balance() != ledger:
+                torn[h] = (c.balance(), ledger)
+        assert not torn, f"round {round_}: exported balances disagree with exported payments {torn}"
 
 
 def test_snapshot_is_not_affected_by_later_writes(svc):
@@ -316,6 +329,50 @@ def test_snapshot_is_not_affected_by_later_writes(svc):
     assert observe(svc, rich["handles"]) == before
     expect(svc.import_(again), 204)
     assert svc.client("ada").balance() == before["ada"]["me"]["balance"] - 5
+
+
+def _shift_years(node, year: str) -> int:
+    """Move every RFC 3339 timestamp string in the state to the given year."""
+    n = 0
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, str) and RFC3339.match(v):
+                node[k] = year + v[4:]
+                n += 1
+            else:
+                n += _shift_years(v, year)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            if isinstance(v, str) and RFC3339.match(v):
+                node[i] = year + v[4:]
+                n += 1
+            else:
+                n += _shift_years(v, year)
+    return n
+
+
+def test_time_never_runs_backwards_after_importing_a_later_clock(svc, svc_b):
+    """W5.4, I29: an export from a source whose clock runs ahead. New records come after the imported ones."""
+    rich = build_rich_state(svc)
+    snap = svc.export()
+    body = copy.deepcopy(snap.body)
+    assert _shift_years(body["state"], "2099"), "no timestamp-shaped string in the export; this probe cannot run"
+    moved = Snapshot(body, json.dumps(body), snap.total, copy.deepcopy(snap.accounts))
+    expect(svc_b.import_(moved), 204)
+    ada = svc_b.client("ada")
+    imported = [ts(p["created_at"]) for p in ada.feed()] + [ts(r["created_at"]) for r in ada.requests()]
+    latest = max(imported)
+    assert latest.year == 2099
+    p = expect(ada.pay("bob", 1), 201)
+    r = expect(ada.ask("cy", 1), 201)
+    sp = expect(ada.split(2, ["ada", "dee"]), 201)
+    st = expect(ada.settle([{"from_handle": "ada", "to_handle": "dee", "amount": 1}]), 201)
+    for stamp in (p["created_at"], r["created_at"], sp["created_at"], st["committed_at"]):
+        assert ts(stamp) >= latest, f"new timestamp {stamp} is earlier than imported {latest}"
+    feed = ada.feed()
+    assert feed[0]["payment_id"] == st["payments"][0]["payment_id"] or feed[0]["settlement_id"] == st["settlement_id"]
+    assert_newest_first(feed)
+    assert_newest_first(ada.requests())
 
 
 def test_reset_after_import_clears_it(svc):
@@ -405,6 +462,8 @@ REJECTS = {
     "empty object": ({}, 422, None),
     "missing track": ("-track", 422, None),
     "wrong track": ({"track": "tablekeeper"}, 422, None),
+    "track in upper case": ({"track": "POCKETFUL"}, 422, None),
+    "track with a space": ({"track": "pocketful "}, 422, None),
     "missing version": ("-format_version", 422, None),
     "version 2": ({"format_version": 2}, 422, None),
     "version string": ({"format_version": "1"}, 422, None),
@@ -440,6 +499,24 @@ def test_rejected_import_changes_nothing(svc, name):
         r = svc.import_raw(body)
     expect_error(r, status, "malformed_request" if status == 400 else "validation_failed")
     assert observe(svc, rich["handles"]) == before
+
+
+@pytest.mark.parametrize("inside,status", [(79, 204), (80, 400)], ids=["80-levels", "81-levels"])
+def test_import_nesting_limit_is_80_levels(svc, inside, status):
+    """PLAN 3.2 (D38): import takes up to 80 levels (the top-level object is level 1); 81 is 400."""
+    rich = build_rich_state(svc)
+    snap = svc.export()
+    expect(svc.client("ada").pay("cy", 1), 201)
+    before = observe(svc, rich["handles"])
+    text = json.dumps(snap.body)[:-1] + ', "pad": ' + "[" * inside + "]" * inside + "}"
+    r = svc.import_raw(content=text.encode())
+    if status == 204:
+        expect(r, 204)
+        svc.accounts, svc.total = copy.deepcopy(snap.accounts), snap.total
+        assert svc.client("ada").balance() == before["ada"]["me"]["balance"] + 1
+    else:
+        expect_error(r, 400, "malformed_request")
+        assert observe(svc, rich["handles"]) == before
 
 
 def test_import_over_64_mib_is_422_and_changes_nothing(world):
