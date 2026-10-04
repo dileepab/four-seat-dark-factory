@@ -335,3 +335,97 @@ I reran the blocking survivor against suite c059eb5, which contains 78bab0a's te
 On clean 2455a8d both new tests pass: the one above, and test_paying_a_request_up_to_exactly_2_53_is_allowed, the boundary.
 
 R21 stays equivalent in practice. R21b shows that test_split_and_its_requests_share_one_created_at catches a real skew.
+
+## W4: APPROVED @ 484349fbb6cf4245b00cdae628e0fb0611494f46 (re-review, D37 fix)
+
+The verifier posted PASS for W4 and W5 on this commit (suite cb41642, room message e3679186):
+- npm test 86/86, the offline build, and `run.sh --upto 5` 1069 passed with none deselected.
+- The supplied checks pass in host and in isolated mode.
+- The final graded-mode check passed on main 49c151d, whose product files equal 484349f's.
+
+The product change since 295378c is confined to src/handlers/settlements.ts:
+- A batch-shape pass now runs over every entry before `readTransfer`. It requires 1 to 32 entries, each an object.
+- `readTransfer` now takes a `JsonObject`.
+
+The fix is plan 3.10 as amended by D37, clause for clause.
+
+I ran the W4 mutants again on this commit: npm test, then acceptance `--upto 4 -m "not container"`, suite cb41642. S08 and the two D37 mutants were rewritten for the new code.
+
+| ID | Result |
+|---|---|
+| S18inv | D37 inverted, so non-object entries are checked per entry in input order (e143cf1's behaviour). Killed by builder "refuses a non-object entry as batch shape, before any entry is checked (plan 3.10)" and by test_non_object_entry_anywhere_makes_the_batch_malformed: "expected 422 validation_failed, got 404 not_found" and "got 422 self_payment" |
+| S18b | The batch-shape pass skips the last entry. Killed: test_malformed_batch_shape_is_422[{'transfers': [None]}], where the trailing `null` reaches `readTransfer` and answers 500 `internal_error`. The builder tests kill it too. |
+| S01, S02, S03, S03b, S04b, S05, S08, S09, S10, S13, S14, S15, S16, S17 | All killed, each by the same test as at e143cf1 (see the W4 BLOCKED entry). S08 is rewritten for the new loop and is killed by test_entry_errors_in_input_order_before_funds[case0]. |
+| S04 | Killed this time by test_concurrent_settlements_and_payments_conserve: a member's `created_at` differed from `committed_at` when the millisecond ticked under the burst. At e143cf1 it survived, so this kill depends on timing. |
+
+17 of 17 killed. S04b is the deterministic check on `created_at` = `committed_at`.
+
+## W5: BLOCKED @ 484349fbb6cf4245b00cdae628e0fb0611494f46
+
+The commit carries 295378c's W5 unchanged: snapshot.ts, system.ts, app.ts, context.ts and json.ts are identical. I ran the W5 mutants on 295378c, with npm test and then acceptance `--upto 5 -m "not container"`, suite c059eb5. Each group had a second local server for the second-container checks, and a clean baseline passed 1057.
+
+### Reason 1: an export that is not one snapshot passes every test (spec §10 "Export is an atomic, read-only snapshot", I26)
+
+- Mutant E19 makes `exportSnapshot` read the users first, wait 20 ms, then read payments, requests and idempotency records. It survives npm test 84/84 and acceptance 1057 passed.
+- Probe (`.work/critic-h6bj/probe_e19.py`): 10 users at 1000; 49 concurrent payments of 37 around one export.
+  - E19, all 3 attempts: 6 of the 10 exported balances disagree with the exported payments, for example b0 holds 1000 while its payments give 1037. The balance sum is still 10000.
+  - Clean 295378c: 0 of 10 disagree in all 3 attempts.
+- Why no test catches it: test_export_during_a_burst_is_a_consistent_snapshot imports the mid-burst export into B and asserts only I1 and I2. A torn export keeps the sum and keeps every balance non-negative.
+
+### Reason 2: time can run backwards after an import, and no test can see it (W5.4 "new timestamps are not earlier than imported ones", I29)
+
+- Mutant E04 deletes `st.lastTs = lastTs;` from `importState`. It survives both suites.
+- Probe (`probe_e04.py`): export a state with one payment, move every timestamp in it to 2099, import, then pay.
+  - E04: the new payment gets created_at 2026-10-04T08:17:41.704+00:00, and the feed reads [2026, 2099]. Time runs backwards in creation order.
+  - Clean 484349f: the new payment gets 2099-01-01T00:00:00.000+00:00.
+- Why no test catches it: test_new_ids_never_collide_and_time_moves_forward_after_import imports real exports. Their timestamps are never ahead of the destination clock, so the test passes whether or not `last_ts` is restored. A source container whose clock runs ahead of the destination's produces exactly the probe's input.
+
+### Reason 3: reset and import accept nesting up to 80 levels, against plan 3.2 and D9 (64 for every body), with no decision recorded
+
+- app.ts sets `TEST_BODY_DEPTH = MAX_DEPTH + 16` for both test hooks.
+- Probe (`probe_depth.py`) on 295378c:
+  - Reset with a body 65 levels deep → 204, and 80 levels → 204. Plan 3.2 says 400 for both. 81 levels → 400.
+  - A payment whose body is 64 levels deep exports at depth 68 and imports (204), and its replay is 200. Import therefore needs more than 64, so plan 3.2 cannot hold for import as written.
+  - Reset has no such need.
+- D36 covers only the size limit. No test pins either limit: test_unparseable_reset_body_is_400_and_changes_nothing uses 201 levels, which fails under 64 and 80 alike. The builder test "accepts an export holding a stored body nested 64 levels deep" pins only the import side from below.
+
+### Missing evidence
+
+1. A test that would fail on E19. One way: in the mid-burst test, after importing into B, check every user's `GET /me` balance against 1000 + received − sent over that user's own `GET /activity`. Each user sees all of their own payments.
+2. A test that would fail on E04. One way: import an export whose timestamp-shaped strings (plan 3.7 format) are all moved ahead, for example to 2099. A new payment's `created_at` must then be no earlier than the latest imported one, and `GET /activity` must stay newest first by `created_at`.
+3. A planner decision on the depth limit for reset and import, recorded in the plan, plus a test that pins it.
+   - Recommended: record the code's 80 for both test hooks, which needs no product change, and pin 80 accepted and 81 → 400.
+   - The alternative is 64 for reset, which is a builder change.
+
+1 and 2 are tests only. 3 needs no product change if the planner takes the recommended option.
+
+### Recorded, not blocking (validation boundaries; builder tests recommended, since the suite treats the state as opaque)
+
+- E15: an idempotency record without `response`, or with a non-object body, is accepted. The replay then answers 200 with an empty body, or 409. Clean code answers 422 and changes nothing (`probe_e15.py`).
+- E28: `last_ts` is accepted as any string, and every later `created_at` becomes that string.
+- E18: `minor_units` 1 is accepted on import.
+- E27: `track` is compared case-insensitively, so "POCKETFUL" is accepted. The acceptance suite can test this one directly, since `track` is a documented top-level field.
+
+### Clause map (W5)
+
+| Plan clause | Code @ 484349f (= 295378c) | Killing tests (mutant) |
+|---|---|---|
+| 3.12 export: unauthenticated; `track`, `format_version` 1, `state` with `schema` 1 and every collection; one synchronous pass | snapshot.ts `exportState`, system.ts `exportSnapshot` | round_trip_in_the_same_container (E01 tokens, E02 keys, E16 order, E17 status); atomicity: **none effective** (E19) |
+| I12 per-account salt, no plaintext | password records copied as stored | test_equal_passwords_are_hashed_with_different_salts (M16); test_export_holds_no_plaintext_password_or_bearer_token |
+| 3.12 import: 400 unreadable; 422 track, version and state; full validation; nothing changes; one swap; replacement, not merge | `importState` builds aside; system.ts swaps once | rejected_import_changes_nothing (E07, E08, E26, E20 partial swap; builder E13); round_trip (E03 merge, E10 replay) |
+| 3.12 after import: tokens, logins, replays, failed keys, operators | tokens, password records and idempotency records restored | import_drops_tokens_issued_after_the_export_for_the_same_users (E14); round_trip (E12 operators) |
+| W5.4 new ids never collide, new timestamps not earlier | `newId` checks the imported maps; `seq` and `last_ts` are the maxima | ids: covered; timestamps: **none effective** (E04) |
+| 3.2 / D9 depth 64 for every body | 80 for reset and import | **none at the boundary** (reason 3) |
+
+Spec §10 lines the supplied checks never ask (test_sample.py::test_export_can_restore_a_payment is a plain round trip):
+- "atomic, read-only snapshot": reason 1.
+- "replacement, not merge": E03 killed.
+- "without changing the destination": E07, E08, E20 and E26 killed.
+- "must not be regenerated or replayed": E10 killed.
+- "Failed request keys remain reusable": test_import_preserves_failed_keys_pending_requests_and_operators.
+- "Import removes all previous destination data and credentials": E14 killed.
+- "Reset clears all state, including imported state": test_reset_after_import_clears_it.
+
+Mutant totals (20 on 295378c): 14 killed for the mutated reason (E01, E02, E03, E07, E08, E10, E12, E13, E14, E16, E17, E20, E26, M16). E04 and E19 survived and are reasons 2 and 1. E15, E18, E27 and E28 survived and are recorded above.
+
+Polish: RUN.md's `--name pf-<seat>-acc` assumes the reader knows what a seat is. Any name works.
