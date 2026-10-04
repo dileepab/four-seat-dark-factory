@@ -79,7 +79,7 @@ describe('GET /_test/export, schema 2 (W8.1)', () => {
     const snapshot = await exportFrom(port);
     assert.equal(snapshot.format_version, 1);
     const s = snapshot.state;
-    assert.equal(s.schema, 2);
+    assert.equal(s.schema, 3, 'stage 3 exports schema 3, a superset of schema 2');
     assert.equal(s.authorization_ttl_seconds, 3600);
     assert.ok(!JSON.stringify(snapshot).includes(PASSWORD));
     const byId = new Map(s.authorizations.map((a: any) => [a.id, a]));
@@ -87,7 +87,8 @@ describe('GET /_test/export, schema 2 (W8.1)', () => {
       w.partial.authorization_id, w.done.authorization_id, w.voided.authorization_id]);
     for (const a of s.authorizations) {
       assert.deepEqual(Object.keys(a).sort(), ['amount', 'captured_amount', 'closed_at', 'created_at', 'expires_at',
-        'from_user_id', 'id', 'note', 'payment_id', 'payment_ids', 'seq', 'status', 'to_user_id', 'visibility']);
+        'from_user_id', 'id', 'note', 'payment_id', 'payment_ids', 'seeded_closed', 'seq', 'status', 'to_user_id', 'visibility']);
+      assert.equal(a.seeded_closed, a.id === 'a_seed_exp', 'only the hold seeded closed (schema 3)');
       assert.match(a.created_at, TS_RE);
     }
     const lapsed: any = byId.get('a_seed_lapsed');
@@ -233,7 +234,7 @@ describe('upgrade from a stage-1 export (W8.3)', () => {
       assert.deepEqual((await c.get('/authorizations')).body, { authorizations: [], has_more: false });
     }
     const imported = await exportFrom(port);
-    assert.equal(imported.state.schema, 2);
+    assert.equal(imported.state.schema, 3);
     assert.equal(imported.state.authorization_ttl_seconds, 600);
     // Through a schema-2 export and import, the stage-1 replay bodies stay verbatim.
     assert.equal((await importInto(second.port, imported)).status, 204);
@@ -280,7 +281,7 @@ describe('upgrade from a stage-1 export (W8.3)', () => {
     const [a0, ...rest] = s.authorizations;
     const withAuth = (patch: Record<string, unknown>) => ({ ...snapshot, state: { ...s, authorizations: [{ ...a0, ...patch }, ...rest] } });
     const bad: [string, unknown][] = [
-      ['schema 3', { ...snapshot, state: { ...s, schema: 3 } }],
+      ['schema 4', { ...snapshot, state: { ...s, schema: 4 } }],
       ['schema "2"', { ...snapshot, state: { ...s, schema: '2' } }],
       ['no TTL', { ...snapshot, state: { ...s, authorization_ttl_seconds: undefined } }],
       ['TTL 0', { ...snapshot, state: { ...s, authorization_ttl_seconds: 0 } }],

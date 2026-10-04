@@ -156,7 +156,7 @@ describe('POST /_test/import', () => {
     const bad: unknown[] = [
       {}, { format_version: 1, state: s }, { track: 'pocketful', state: s }, { track: 'pocketful', format_version: 1 },
       { ...snapshot, track: 'other' }, { ...snapshot, format_version: 2 }, { ...snapshot, format_version: '1' },
-      { ...snapshot, state: [] }, { ...snapshot, state: 'x' }, { ...snapshot, state: { ...s, schema: 3 } },
+      { ...snapshot, state: [] }, { ...snapshot, state: 'x' }, { ...snapshot, state: { ...s, schema: 4 } },
       { ...snapshot, state: { ...s, schema: 0 } }, { ...snapshot, state: { ...s, schema: '2' } },
       { ...snapshot, state: { ...s, users: [{ ...users[0], balance: -1 }, ...users.slice(1)] } },
       { ...snapshot, state: { ...s, payments: [{ ...s.payments[0], to_user_id: 'u_ghost' }, ...s.payments.slice(1)] } },

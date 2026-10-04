@@ -12,15 +12,19 @@ import { instantKey, tsKey } from './instant.ts';
 import {
   addAuthorization, addPayment, addRequest, addUser, AUTHORIZATION_STATUSES, emptyState, formatTs, MAX_AMOUNT,
   MAX_BALANCE, MAX_TTL, REQUEST_STATUSES, sortByTime, VISIBILITIES,
-  type AuthorizationStatus, type PasswordHash, type RequestStatus, type State, type Visibility,
+  type AuthorizationStatus, type PasswordHash, type RequestStatus, type Revision, type Snapshot, type State,
+  type Visibility,
 } from './state.ts';
 import { rfc3339Ms } from './time.ts';
 
 export const TRACK = 'pocketful';
 export const FORMAT_VERSION = 1;
-// The state layout (D52): 1 is stage 1's (no authorizations), 2 adds the TTL, every
-// authorization and each payment's authorization_id. Import reads both.
-const SCHEMA = 2;
+// The state layout (D52, D76): 1 is stage 1's (no authorizations), 2 adds the TTL, every
+// authorization and each payment's authorization_id, 3 adds every payment's revisions, each
+// user's opening balance, whether a seeded hold was seeded closed, and the statement
+// snapshots. Import reads all three.
+const SCHEMA = 3;
+const MAX_REASON = 200;
 const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00$/;
 const DIGEST_RE = /^[0-9a-f]{64}$/;
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -40,13 +44,17 @@ export function exportState(st: State): JsonObject {
       authorization_ttl_seconds: st.authorizationTtl,
       users: [...st.users.values()].map((u) => ({
         id: u.id, email: u.email, password: { ...u.password }, display_name: u.displayName,
-        handle: u.handle, balance: u.balance, seq: u.seq,
+        handle: u.handle, balance: u.balance, opening_balance: u.opening, seq: u.seq,
       })),
       tokens: [...st.tokens].map(([digest, userId]) => ({ digest, user_id: userId })),
       payments: st.payments.map((p) => ({
         id: p.id, from_user_id: p.fromUserId, to_user_id: p.toUserId, amount: p.amount, note: p.note,
         visibility: p.visibility, request_id: p.requestId, settlement_id: p.settlementId,
         authorization_id: p.authorizationId, created_at: p.createdAt, seq: p.seq,
+        revisions: p.revisions.map((r) => ({
+          revision: r.revision, amount: r.amount, effective_at: r.effectiveAt, recorded_at: r.recordedAt,
+          reason: r.reason, seq: r.seq,
+        })),
       })),
       requests: st.requests.map((r) => ({
         id: r.id, requester_id: r.requesterId, payer_id: r.payerId, amount: r.amount, note: r.note,
@@ -66,9 +74,12 @@ export function exportState(st: State): JsonObject {
         id: a.id, from_user_id: a.fromUserId, to_user_id: a.toUserId, amount: a.amount,
         captured_amount: a.capturedAmount, note: a.note, visibility: a.visibility, status: a.status,
         expires_at: a.expiresAt, payment_id: a.paymentId, payment_ids: [...a.paymentIds],
-        created_at: a.createdAt, closed_at: a.closedAt, seq: a.seq,
+        created_at: a.createdAt, closed_at: a.closedAt, seeded_closed: a.seededClosed, seq: a.seq,
       })),
       operator_ids: [...st.operators],
+      snapshots: [...st.snapshots.values()].map((x) => ({
+        token: x.token, owner_id: x.ownerId, from: x.from, to: x.to, known_at: x.knownAt, cutoff: x.cutoff,
+      })),
       idempotency: [...st.idem.values()].map((r) => ({
         user_id: r.userId, method: r.method, path: r.path, key: r.key, body: r.body, response: r.response,
       })),
@@ -121,6 +132,37 @@ function passwordRecord(v: unknown, what: string): PasswordHash {
   return { alg: 'scrypt', N: o.N as number, r: o.r as number, p: o.p as number, salt: o.salt as string, hash: o.hash as string };
 }
 
+// A schema-3 payment's revisions: 1..n without gaps; revision 1 the payment as made; each
+// later one a correction recorded strictly after the one before (plan 3.11).
+function revisionsOf(p: JsonObject, what: string, see: (seq: unknown, ts: string, what: string) => void): Revision[] {
+  check(Array.isArray(p.revisions) && p.revisions.length > 0, `${what}.revisions must be a non-empty array`);
+  const out: Revision[] = [];
+  (p.revisions as unknown[]).forEach((r, j) => {
+    const w = `${what}.revisions[${j}]`;
+    check(isObject(r), `${w} must be an object`);
+    const o = r as JsonObject;
+    check(o.revision === j + 1, `${w}.revision must be ${j + 1}`);
+    check(isInt(o.amount, 0, MAX_AMOUNT), `${w}.amount must be an integer from 0 to ${MAX_AMOUNT}`);
+    const effKey = instantKey(o.effective_at);
+    const recKey = instantKey(o.recorded_at);
+    check(effKey !== null && recKey !== null, `${w}.effective_at and recorded_at must be instants`);
+    if (j === 0) {
+      check(o.amount === p.amount && o.effective_at === p.created_at && o.recorded_at === p.created_at && o.reason === '',
+        `${w} must be the payment as made: its amount, created_at as both times, reason ""`);
+    } else {
+      check(typeof o.reason === 'string' && cpLength(o.reason) >= 1 && cpLength(o.reason) <= MAX_REASON,
+        `${w}.reason must be a string of 1 to ${MAX_REASON} characters`);
+      check((recKey as string) > out[j - 1].recKey, `${w}.recorded_at must be later than the revision before`);
+    }
+    see(o.seq, o.recorded_at as string, w);
+    out.push({
+      revision: j + 1, amount: o.amount as number, effectiveAt: o.effective_at as string, effKey: effKey as string,
+      recordedAt: o.recorded_at as string, recKey: recKey as string, reason: o.reason as string, seq: o.seq as number,
+    });
+  });
+  return out;
+}
+
 // Validate the whole export and build the state it describes. Throws 422 before anything
 // changes; the caller swaps the result in.
 export function importState(body: JsonObject): State {
@@ -128,8 +170,9 @@ export function importState(body: JsonObject): State {
   check(body.format_version === FORMAT_VERSION, `format_version must be ${FORMAT_VERSION}`);
   check(isObject(body.state), 'state must be an object');
   const s = body.state as JsonObject;
-  check(s.schema === 1 || s.schema === SCHEMA, `state.schema must be 1 or ${SCHEMA}`);
-  const v2 = s.schema === SCHEMA;
+  check(s.schema === 1 || s.schema === 2 || s.schema === SCHEMA, 'state.schema must be 1, 2 or 3');
+  const v2 = s.schema !== 1;
+  const v3 = s.schema === SCHEMA;
   check(typeof s.currency === 'string' && /^[A-Z]{3}$/.test(s.currency), 'currency must be three capital letters');
   check(isInt(s.minor_units, 0, 3) && s.minor_units !== 1, 'minor_units must be 0, 2 or 3');
   check(isInt(s.seq, 0, Number.MAX_SAFE_INTEGER), 'seq must be a non-negative integer');
@@ -161,11 +204,14 @@ export function importState(body: JsonObject): State {
     check(typeof u.display_name === 'string', `${what}.display_name must be a string`);
     check(typeof u.handle === 'string' && HANDLE_RE.test(u.handle) && !st.usersByHandle.has(u.handle), `${what}.handle must be a unique handle`);
     check(isInt(u.balance, 0, MAX_BALANCE), `${what}.balance must be an integer from 0 to 2^53`);
+    check(!v3 || isInt(u.opening_balance, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+      `${what}.opening_balance must be an integer`);
     see(u.seq, null, what);
     addUser(st, {
       id: u.id as string, email: u.email as string, emailKey: emailKey(u.email as string),
       password: passwordRecord(u.password, `${what}.password`), displayName: u.display_name as string,
-      handle: u.handle as string, balance: u.balance as number, opening: 0, seq: u.seq as number,
+      handle: u.handle as string, balance: u.balance as number, opening: v3 ? u.opening_balance as number : 0,
+      seq: u.seq as number,
     });
   });
 
@@ -187,12 +233,14 @@ export function importState(body: JsonObject): State {
       `${what} links must be strings or null`);
     check(isInstant(p.created_at), `${what}.created_at must be an instant`);
     see(p.seq, p.created_at as string, what);
+    // Schemas 1 and 2 get revision 1 from the payment itself (addPayment).
+    const revisions = v3 ? revisionsOf(p, what, see) : undefined;
     addPayment(st, {
       id: p.id as string, fromUserId: p.from_user_id as string, toUserId: p.to_user_id as string,
       amount: p.amount as number, note: p.note as string, visibility: p.visibility as Visibility,
       requestId: p.request_id as string | null, settlementId: p.settlement_id as string | null,
       authorizationId: v2 ? p.authorization_id as string | null : null,
-      createdAt: p.created_at as string, seq: p.seq as number,
+      createdAt: p.created_at as string, seq: p.seq as number, revisions,
     });
   });
 
@@ -269,6 +317,7 @@ export function importState(body: JsonObject): State {
         `${what}.payment_ids must be an array of strings`);
       check(isInstant(a.created_at), `${what}.created_at must be an instant`);
       check(a.closed_at === null || isTs(a.closed_at), `${what}.closed_at must be a timestamp or null`);
+      check(a.seeded_closed === undefined || typeof a.seeded_closed === 'boolean', `${what}.seeded_closed must be a boolean`);
       see(a.seq, a.created_at as string, what);
       if (a.closed_at !== null) see(a.seq, a.closed_at as string, what);
       addAuthorization(st, {
@@ -278,7 +327,7 @@ export function importState(body: JsonObject): State {
         expiresAt: a.expires_at as string, expiresMs: expiresMs as number,
         paymentId: a.payment_id as string | null, paymentIds: [...(a.payment_ids as string[])],
         createdAt: a.created_at as string, closedAt: a.closed_at as string | null,
-        seededClosed: false, baseCaptured: 0, seq: a.seq as number,
+        seededClosed: a.seeded_closed === true, baseCaptured: 0, seq: a.seq as number,
       });
     });
   }
@@ -287,6 +336,23 @@ export function importState(body: JsonObject): State {
   check(Array.isArray(operators) && (operators as unknown[]).every((id) => typeof id === 'string' && st.users.has(id)),
     'operator_ids must name users');
   for (const id of operators as string[]) st.operators.add(id);
+
+  const snapshots: Snapshot[] = v3 ? list(s, 'snapshots').map((x, i) => {
+    const what = `snapshots[${i}]`;
+    check(typeof x.token === 'string' && x.token.length > 0, `${what}.token must be a token`);
+    check(typeof x.owner_id === 'string' && st.users.has(x.owner_id), `${what}.owner_id must name a user`);
+    const fromKey = x.from === null ? null : instantKey(x.from);
+    const toKey = instantKey(x.to);
+    const knownKey = x.known_at === null ? null : instantKey(x.known_at);
+    check((x.from === null || fromKey !== null) && toKey !== null && (x.known_at === null || knownKey !== null),
+      `${what} bounds must be instants (from and known_at may be null)`);
+    check(isInt(x.cutoff, 0, Number.MAX_SAFE_INTEGER), `${what}.cutoff must be a non-negative integer`);
+    return {
+      token: x.token as string, ownerId: x.owner_id as string, from: x.from as string | null, fromKey,
+      to: x.to as string, toKey: toKey as string, knownAt: x.known_at as string | null, knownKey,
+      cutoff: x.cutoff as number,
+    };
+  }) : [];
 
   list(s, 'idempotency').forEach((r, i) => {
     const what = `idempotency[${i}]`;
@@ -304,12 +370,23 @@ export function importState(body: JsonObject): State {
 
   st.seq = seq;
   st.lastTs = lastTs;
-  // Opening balances (plan 3.7, D69): the imported balance minus the net of all the user's
-  // payments. A captured amount not matched by linked capture payments counts from creation.
+  for (const x of snapshots) {
+    check(!st.snapshots.has(x.token), `snapshot token ${x.token} repeats`);
+    check(x.cutoff <= seq, `snapshot ${x.token} has a cutoff beyond the state's creation sequence`);
+    st.snapshots.set(x.token, x);
+  }
+  // Opening balances (plan 3.7, D69): from a schema-1 or schema-2 state, the imported balance
+  // minus the net of all the user's payments; a schema-3 state carries them, and each must add
+  // up to the balance with the latest revisions. A captured amount not matched by linked
+  // capture payments counts from creation.
   for (const user of st.users.values()) {
     let net = 0;
-    for (const p of st.paymentsOf.get(user.id) ?? []) net += p.fromUserId === user.id ? -p.amount : p.amount;
-    user.opening = user.balance - net;
+    for (const p of st.paymentsOf.get(user.id) ?? []) {
+      const latest = p.revisions[p.revisions.length - 1].amount;
+      net += p.fromUserId === user.id ? -latest : latest;
+    }
+    if (v3) check(user.opening + net === user.balance, `${user.id}: opening_balance and the latest revisions do not add up to balance`);
+    else user.opening = user.balance - net;
   }
   for (const a of st.authorizations) {
     const linked = (st.capturesOf.get(a.id) ?? []).reduce((sum, p) => sum + p.amount, 0);

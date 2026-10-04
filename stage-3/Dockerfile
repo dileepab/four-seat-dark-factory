@@ -1,4 +1,4 @@
-# Pocketful stage 2. The build downloads nothing: it copies the source and the UI files onto a
+# Pocketful stage 3. The build downloads nothing: it copies the source and the UI files onto a
 # pinned Node 24 image, which runs the TypeScript through Node's built-in type stripping.
 FROM node:24.14.0-alpine3.22
 
