@@ -135,8 +135,9 @@ export function expectError(reply: Reply, status: number, code: string): void {
   }
 }
 
-// A second, independent service in its own process (the "second container" of W5).
-export async function startProcess(): Promise<Server> {
+// A second, independent service in its own process (the "second container" of W5); `main`
+// may name another build's entry point, such as the frozen stage-1 service (W8).
+export async function startProcess(main = new URL('../src/main.ts', import.meta.url).pathname): Promise<Server> {
   const { spawn } = await import('node:child_process');
   const net = await import('node:net');
   const port = await new Promise<number>((resolve) => {
@@ -146,7 +147,7 @@ export async function startProcess(): Promise<Server> {
       probe.close(() => resolve(free));
     });
   });
-  const child = spawn(process.execPath, [new URL('../src/main.ts', import.meta.url).pathname], {
+  const child = spawn(process.execPath, [main], {
     env: { ...process.env, PORT: String(port) }, stdio: 'ignore',
   });
   for (let i = 0; i < 100; i++) {

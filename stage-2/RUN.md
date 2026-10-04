@@ -36,7 +36,9 @@ cd stage-2 && PORT=8080 node src/main.ts
 ## Builder tests
 
 Unit and integration tests with `node:test`; each file starts its own in-process server on a
-free port (the export and import tests also start a second service process).
+free port (the export and import tests also start a second service process). The upgrade tests
+(`test/w8-upgrade.test.ts`) also start the frozen stage-1 service from `../stage-1/src/main.ts`,
+read-only, as the previous version whose export stage 2 must import.
 
 ```sh
 cd stage-2 && npm test
@@ -71,6 +73,6 @@ scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 -
   (`authorizations.ts` for holds, captures and voids).
 - `src/state.ts` — the in-memory state, ids, timestamps, the service clock and holds;
   `src/time.ts` — RFC 3339 instants; `src/fixture.ts` — reset validation; `src/snapshot.ts` —
-  export and import; `src/idempotency.ts` — idempotent write paths; `src/ledger.ts` — moving
+  export (schema 2) and import (schemas 1 and 2); `src/idempotency.ts` — idempotent write paths; `src/ledger.ts` — moving
   money; `src/passwords.ts` — scrypt hashing and bearer tokens.
 - `test/` — builder tests.
