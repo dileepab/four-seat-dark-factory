@@ -467,3 +467,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W3 @ 2455a8d (builder) | verifier, critic | 07:29Z | verifier PASS 07:33Z | awaiting critic |
 | HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z | awaiting critic |
 | HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | — | awaiting verifier run |
+| Liveness resend to critic: W3, W4, W5 reviews (no acknowledgement for 20 min) | critic | 07:50Z | — | resent once |
