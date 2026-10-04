@@ -9,7 +9,7 @@ Frozen references: `stage-1/` (accepted at 4baf8d9), `stage-2/` (accepted at f9e
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W19 | builder | Refunds: `POST /payments/{id}/refunds`, `refund_of` on every payment, corrections bounded by refunds | BUILDING (2b3944a, gate running; 4484652 left out two new files) | 2b3944a |
+| W19 | builder | Refunds: `POST /payments/{id}/refunds`, `refund_of` on every payment, corrections bounded by refunds | HANDED_OFF (2b3944a, by 16:40Z; 4484652 left out two new files) | 2b3944a |
 | W20 | builder | Batch corrections: `POST /correction-batches`, settlement members, combined funds and history | BUILDING (9948ff9) | 9948ff9 |
 | W21 | builder | Export schema 4; import of stage-1, stage-2, stage-3 and stage-4 exports; RUN.md | BUILDING (f4c2f9e) | f4c2f9e |
 | W22 | verifier | Stage-4 acceptance suite: stage-1 to stage-3 regression, refunds, batches, upgrade | BUILDING (first suite 1028890 at 16:23Z; trace F1-F43 filled from it at 16:25Z, every row has tests) | 1028890 |
@@ -280,6 +280,7 @@ Each normative line of stage-4.md, condensed (F1–F43), with the acceptance tes
 | Stage-4 handoff, parts 1-16 (plan 76b3707) | builder, verifier, critic | 15:51Z | critic (plan review, c8106d0), builder (W19 at 2b3944a, 16:05Z; plan revision acknowledged), verifier (after a liveness ping at 16:11Z: all 16 parts and the revision arrived; regression brought to stage 4, W19 and W20 tests drafted) | acknowledged |
 | Critic plan review @ 76b3707 (REVIEW.md c8106d0: 1 defect, 1 wording, 7 criteria) -> plan revision: D106 (snapshots keep their payment form), I76, 3.6, 3.11, 3.12 wording, W19.3, W19.4, W20.4-W20.7, W21.2, W21.3 | builder, verifier, critic | 16:02Z | — | sent |
 | Verifier: first W22 suite 1028890 (16:23Z) with a trace map -> planner: trace filled; 95 test names checked against 1028890, none missing; no gap found | verifier | 16:25Z | — | done |
+| HANDOFF W19 @ 2b3944a (builder): npm 220/220; acceptance 1028890 --upto 19 "2688 passed, 186 deselected"; harness s4-b04: stages 1-3 pass, stage 4 3 passed and the 2 expected batch failures | verifier, critic, planner | by 16:40Z | planner | awaiting the verdict |
 
 ## 8. Stage close
 
