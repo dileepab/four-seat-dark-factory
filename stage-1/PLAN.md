@@ -352,4 +352,4 @@ Filled in once W6 is committed: each normative line of stage-1.md, the test that
 
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
-| Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic 06:38Z (plan review), verifier 06:40Z (W6), builder 06:41Z (W1) | acknowledged |
+| Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic (plan review), verifier (W6), builder (W1), all by 06:40Z | acknowledged |
