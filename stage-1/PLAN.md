@@ -11,8 +11,8 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | ACCEPTED (PASS + APPROVED @ 2455a8d, suite 78bab0a; REVIEW.md bac1342) | 2455a8d |
-| W4 | builder | Settlements | VERIFIED (PASS @ 484349f, suite cb41642); awaiting critic | 484349f |
-| W5 | builder | Export and import | VERIFIED (PASS @ 484349f, suite cb41642); awaiting critic | 484349f |
+| W4 | builder | Settlements | ACCEPTED (PASS + APPROVED @ 484349f, suite cb41642; REVIEW.md cf4aab0) | 484349f |
+| W5 | builder | Export and import | VERIFIED (PASS @ 484349f); BLOCKED by critic (E19 torn export, E04 time after import: tests owed; depth limit: D38) | 484349f |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
@@ -88,7 +88,7 @@ Each one is a check a test can perform. "Every read" includes reads taken during
 
 - Responses are JSON with `Content-Type: application/json; charset=utf-8`; a 204 has no body. The request `Content-Type` is not checked; a body is read as UTF-8 JSON.
 - Body limit: 1 MiB on API endpoints, 64 MiB on `POST /_test/reset` and `POST /_test/import`. A larger body gets 422 `validation_failed`; the server drains the body before answering so the client always reads the response (D8).
-- 400 `malformed_request` when a body that the endpoint reads is: not valid UTF-8, not valid JSON, empty (zero bytes or whitespace), nested deeper than 64 levels, holding a string with an unpaired surrogate such as `"\ud800"`, or not a JSON object at the top level (D7, D9, D10). Decline and cancel never read the body.
+- 400 `malformed_request` when a body that the endpoint reads is: not valid UTF-8, not valid JSON, empty (zero bytes or whitespace), nested deeper than 64 levels (80 on `POST /_test/reset` and `POST /_test/import`, D38), holding a string with an unpaired surrogate such as `"\ud800"`, or not a JSON object at the top level (D7, D9, D10). Decline and cancel never read the body.
 - Header blocks up to 1 MiB are accepted. When the HTTP layer itself rejects a request, the answer still carries the envelope: 422 `validation_failed` for oversized headers, 400 `malformed_request` otherwise (D28).
 - Unknown body fields and unknown query parameters are ignored. A repeated query parameter uses its first occurrence (D25).
 - "Characters" means Unicode code points everywhere: note, password and display name lengths, key length, handle derivation and truncation (D11).
@@ -297,10 +297,10 @@ Specification: §11. Invariants: I1, I2, I15–I19, I22, I23, I24.
 
 Specification: §10, last paragraph of §11. Invariants: I12, I15, I25, I26, I28.
 
-- W5.1 Export shape; unauthenticated; later writes do not change an export already returned; no plaintext password anywhere in it.
+- W5.1 Export shape; unauthenticated; later writes do not change an export already returned; no plaintext password anywhere in it; an export taken during a burst of payments is one snapshot: after importing it, every user's balance equals the seeded balance plus received minus sent over that user's imported feed (critic E19).
 - W5.2 Round trip in the same container after a reset, and into a second container: tokens from before the export work, logins work, `GET /me`, feeds and request lists are identical (ids, timestamps, order), replays of earlier keys return 200 with the original bodies, keys that failed earlier are reusable, settlements and operator permissions survive; users and tokens created after the export are gone; importing twice equals importing once; a reset after an import clears it.
 - W5.3 Rejected imports (invalid JSON 400; missing `track`, `format_version` or `state`, wrong track, wrong version, non-object state, a corrupt state such as a negative balance or a dangling user reference, all 422) leave the destination unchanged.
-- W5.4 After an import, new payments, requests, splits and settlements get ids that never collide with imported ones, and new timestamps are not earlier than imported ones.
+- W5.4 After an import, new payments, requests, splits and settlements get ids that never collide with imported ones, and new timestamps are not earlier than imported ones, even when the imported timestamps are later than the destination's clock (critic E04); feeds stay newest first.
 
 ### W6 Acceptance suite (verifier)
 
@@ -351,6 +351,7 @@ Specification: all of stage 1. Invariants: all.
 - **D35 Keep-alive.** Server idle timeout above the client pool's 5 s, so I11's "no dropped connection" holds for reused connections. (Critic plan review.)
 - **D36 Stored request bodies (W5 gap, accepted).** Idempotency records keep the parsed body, so a state holding more than about 64 MiB of stored bodies would export but exceed the 64 MiB import limit. Accepted as is: notes are capped at 200 characters, no specified flow stores large bodies, and raising the import limit would risk the 2 GiB memory limit while parsing.
 - **D37 Non-object settlement entries.** Batch shape, checked for the whole batch before the entry loop: §11 defines the batch as "1..32 objects" and says "malformed batch shape is 422"; per-entry input order applies to entry errors (field rules, unknown handle, self-transfer) within well-formed entries. (Critic W4 review, S18; this is plan 3.10's existing text, now pinned by a test.)
+- **D38 Nesting on test hooks.** `POST /_test/reset` and `POST /_test/import` accept nesting up to 80 levels; API endpoints stay at 64 (D9). An export wraps stored API bodies that may be 64 levels deep, so the import hook needs headroom (a 64-deep body exports at depth 68), and reset shares the limit so both hooks behave alike. 81 levels on either hook is 400 `malformed_request`. (Critic W5 review, finding 3.)
 
 ## 6. Specification trace
 
@@ -469,4 +470,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z; critic BLOCKED 08:00Z (S18; planner chose plan 3.10 order, D37) | blocked |
 | HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | verifier PASS 07:54Z; final check (isolated, main repo @ 720e1c5) claimed stage 1 | awaiting critic |
 | Liveness resend to critic: W3, W4, W5 reviews (no acknowledgement for 20 min) | critic | 07:50Z | critic 07:53Z: all three started; W3 and W4 each have a finding | acknowledged |
-| HANDOFF W4 (fix, D37) + W5 @ 484349f (builder) | verifier, critic | 08:10Z | verifier PASS W4+W5 08:19Z; final check (isolated, main @ 49c151d) claimed stage 1 | awaiting critic |
+| HANDOFF W4 (fix, D37) + W5 @ 484349f (builder) | verifier, critic | 08:10Z | verifier PASS W4+W5 08:19Z; final check (isolated, main @ 49c151d) claimed stage 1; critic APPROVED W4, BLOCKED W5 (E19, E04, depth; D38) | W4 ACCEPTED; W5 blocked |
