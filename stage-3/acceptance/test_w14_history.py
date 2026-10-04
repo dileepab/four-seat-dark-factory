@@ -338,3 +338,17 @@ def test_a_new_users_opening_balance_with_seeded_payments_elsewhere(svc):
     key = new_key()
     expect(svc.client("ada").pay("cy", 30, key=key), 201)
     assert svc.client("cy").me_at(EPOCH)["total"] == 70
+
+
+def test_trailing_fraction_zeros_do_not_change_an_instant(svc):
+    """3.4, D66 (critic G16): .500Z and .5+05:30 seeds are one instant, so the feed puts the later-created
+    first, as_of at .5Z counts both, and 1e-7 s earlier counts neither."""
+    svc.must_reset(fixture(standard_users(), payments=[
+        seeded("p_first", "cy", "dee", 10, "2026-01-01T00:00:00.500Z"),
+        seeded("p_second", "cy", "dee", 20, "2026-01-01T05:30:00.5+05:30")]))
+    assert feed_ids(svc.client("cy")) == ["p_second", "p_first"]
+    cy = svc.client("cy")
+    assert cy.me_at("2026-01-01T00:00:00.5Z")["total"] == 500
+    assert cy.me_at("2026-01-01T00:00:00.5000000000Z")["total"] == 500
+    assert cy.me_at("2026-01-01T00:00:00.4999999Z")["total"] == 530
+    assert cy.me_at(None, "2026-01-01T00:00:00.50Z")["total"] == 500

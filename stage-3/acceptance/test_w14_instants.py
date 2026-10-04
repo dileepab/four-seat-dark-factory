@@ -163,3 +163,11 @@ def test_far_past_and_far_future_views(ada):
     assert ada.me_at(FAR_FUTURE)["total"] == 10_000
     assert ada.me_at(None, FAR_FUTURE)["total"] == 10_000
     assert ada.me_at(FAR_FUTURE, FAR_FUTURE)["total"] == 10_000
+
+
+@pytest.mark.parametrize("param", ["as_of", "known_at"])
+@pytest.mark.parametrize("raw", ["%ZZ", "%", "%2", "2026-01-01T00:00:00%ZZ", "%FF"])
+def test_a_broken_percent_escape_is_422_not_absent(world, param, raw):
+    """3.2, 3.4, I53 (critic Q04): a value that cannot be percent-decoded is present and invalid, never absent."""
+    status, _, body = raw_request(world.svc.base_url, "GET", f"/me?{param}={raw}", token=world.ada.token)
+    assert status == 422 and json.loads(body)["error"]["code"] == "validation_failed", (status, body[:200])

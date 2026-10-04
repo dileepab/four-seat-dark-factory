@@ -74,7 +74,8 @@ def test_seeded_history_order_ties_and_zero_amounts(hist):
 
 
 def test_ties_sort_by_payment_id_code_points(svc):
-    ids = ["p_b", "p_B", "p_a", "p_A", "p_10", "p_9", "q", "P"]
+    # p_\uff5a before p_\U0001F600 in code points, after it in UTF-16 code units (critic T05).
+    ids = ["p_b", "p_B", "p_a", "p_A", "p_10", "p_9", "q", "P", "p_\U0001F600", "p_\uff5a"]
     at = "2026-05-01T10:00:00Z"
     svc.must_reset(fixture([user("ada", 1_000), user("bob", 0)],
                            payments=[seeded(i, "bob", "ada", 1, at) for i in ids]))
@@ -410,3 +411,11 @@ def test_holds_are_not_entries_and_each_capture_is_one(world):
         assert {e["payment"]["authorization_id"] for e in st.entries} == {a1["authorization_id"]}
     assert read_statement(world.cy, uid(svc, "cy")).entries == []
     assert a3["status"] == "open"
+
+
+@pytest.mark.parametrize("param", ["from", "to", "known_at"])
+@pytest.mark.parametrize("raw", ["%ZZ", "%", "%2", "%FF"])
+def test_a_broken_percent_escape_in_a_statement_instant_is_422(world, param, raw):
+    """3.2, 3.4, I53 (critic Q04)."""
+    status, _, body = raw_request(world.svc.base_url, "GET", f"/statement?{param}={raw}", token=world.ada.token)
+    assert status == 422 and json.loads(body)["error"]["code"] == "validation_failed", (status, body[:200])

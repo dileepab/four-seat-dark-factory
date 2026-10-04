@@ -428,6 +428,8 @@ def check_revision(r: dict, **want) -> dict:
     assert isinstance(r["reason"], str), r
     if r["revision"] > 1:
         assert 1 <= len(r["reason"]) <= 200, f"a correction's reason has 1..200 code points: {r}"
+        assert instant(r["effective_at"]) <= instant(r["recorded_at"]), \
+            f"D81: a correction takes effect no later than now, and now is no later than its recorded_at: {r}"
     for k, v in want.items():
         assert r[k] == v, f"revision {k}: expected {v!r}, got {r[k]!r} in {r}"
     return r

@@ -564,3 +564,31 @@ def test_revisions_read_permissions(paid):
     expect_error(w.svc.api().revisions_resp(w.pid), 401, "unauthenticated")
     expect_error(w.svc.api().revisions_resp("p_nope"), 401, "unauthenticated")
     expect_error(w.svc.api("not-a-token").revisions_resp(w.pid), 401, "unauthenticated")
+
+
+def test_one_instant_is_combined_with_the_debit_created_first(svc):
+    """I58, stage-3 "the combined effect of all movements at that instant" (critic K12): dee's debit is created
+    before the credit she moves it onto, so checking after each event instead of each instant would refuse it."""
+    svc.must_reset(fixture([user("ada", 10_000), user("bob", 2_500), user("cy", 500), user("dee", 300)]))
+    dee, ada = svc.client("dee"), svc.client("ada")
+    debit = expect(dee.pay("cy", 300), 201)
+    credit = expect(ada.pay("dee", 500), 201)
+    t = credit["created_at"]
+    r = expect(dee.correct(debit["payment_id"], 1, 500, t), 201)
+    assert r["effective_at"] == t
+    assert dee.me_at(t)["total"] == 300 and dee.me_at(shifted(t, -1))["total"] == 300
+    assert dee.money() == (300, 300, 0)
+
+
+def test_no_clock_tolerance_on_effective_at(paid):
+    """D81 (critic K25b): 200 ms after a fresh service time mark is later than now. A slow host that accepts
+    it must still have recorded it at or after its effective_at (effective_at <= now <= recorded_at)."""
+    w = paid
+    for n in range(3):
+        mark = w.ada.service_now("cy")
+        at = shifted(mark, 200_000, digits=3)
+        r = w.ada.correct(w.pid, 1 + sum(1 for x in w.ada.revisions(w.pid)[1:]), 50 + n, at)
+        if r.status_code == 201:
+            assert instant(r.json()["recorded_at"]) >= instant(at), f"D81: accepted before its effective_at: {r.json()}"
+        else:
+            expect_error(r, 422, "validation_failed")

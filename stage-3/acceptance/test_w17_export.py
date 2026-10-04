@@ -26,17 +26,25 @@ OPENING_ZED = 731_337          # zed's opening balance; appears nowhere else in 
 HANDLES = ["ada", "bob", "cy", "dee", "zed"]
 
 
-def history_fixture() -> dict:
+BASE_CAPTURED = 377            # a_sent's seeded captured_amount; appears nowhere else in the state
+
+
+def history_fixture(far: str) -> dict:
     users = standard_users() + [user("zed", OPENING_ZED + 63)]
     return fixture(users, operators=["u_ada"], payments=[
         seeded("p_z", "ada", "zed", 63, "2026-02-01T00:00:00.000001+01:00"),
-        seeded("p_old", "bob", "cy", 25, "2026-02-02T00:00:00Z", note="old")])
+        seeded("p_old", "bob", "cy", 25, "2026-02-02T00:00:00Z", note="old")],
+        authorizations=[{"id": "a_sent", "from_user_id": "u_zed", "to_user_id": "u_ada", "amount": 5_000,
+                         "expires_at": far, "captured_amount": BASE_CAPTURED}])
 
 
 def build_history(svc) -> dict:
     """Revisions, opening balances, snapshots, correction keys and holds: everything schema 3 adds."""
-    svc.must_reset(history_fixture())
+    svc.must_reset(fixture(standard_users()))
+    far = shifted(svc.client("ada").service_now("bob"), seconds=7200, digits=3)
+    svc.must_reset(history_fixture(far))
     ada, bob, cy = svc.client("ada"), svc.client("bob"), svc.client("cy")
+    expect(ada.capture("a_sent", {"amount": 100, "final": False}), 201)    # captured 477 = base 377 + 100
     replays = []
 
     def correct(c, who, pid, rev, amount, at, reason):
@@ -294,6 +302,15 @@ def corrupt(body: dict, rich: dict, how: str) -> dict:
         _swap_all(_revision_record(state, rich["r4"]), 90, 1_000_000_001)
     elif how == "correction effective_at not an instant":
         _swap_all(_revision_record(state, rich["r2"]), "2026-01-15T00:00:00Z", "2026-01-15")
+    elif how == "snapshot cutoff beyond the sequence":
+        rec = _snapshot_record(state, rich["snaps"]["bob"].snapshot)
+        ints = [k for k, v in rec.items() if type(v) is int]
+        assert len(ints) == 1, f"the snapshot record has {len(ints)} integer fields, not one cutoff; this probe cannot run"
+        rec[ints[0]] = 10 ** 12
+    elif how == "base captured amount not adding up":
+        rec = _record_holding_all(state, ("a_sent", 477))
+        assert rec is not None, "no authorization record holds a_sent with captured_amount 477; this probe cannot run"
+        _swap(rec, BASE_CAPTURED, BASE_CAPTURED + 1)
     elif how.startswith("schema "):
         state["schema"] = json.loads(how.split(" ", 1)[1])
     else:
@@ -304,7 +321,8 @@ def corrupt(body: dict, rich: dict, how: str) -> dict:
 REJECTS = ["revision gap", "revision 1 differs from its payment", "recorded_at decreases",
            "opening balance does not add up", "snapshot owner unknown", "duplicate snapshot token",
            "correction reason empty", "correction amount above the maximum",
-           "correction effective_at not an instant", "schema 4", "schema 0"]
+           "correction effective_at not an instant", "snapshot cutoff beyond the sequence",
+           "base captured amount not adding up", "schema 4", "schema 0"]
 
 
 @pytest.mark.parametrize("how", REJECTS)

@@ -288,3 +288,13 @@ def test_microsecond_boundaries_of_a_seeded_hold(svc):
     assert view(ada, shifted(deadline, -1)) == (10_000, 9_300, 700)
     assert view(ada, deadline) == (10_000, 10_000, 0)
     assert view(ada, fmt_instant(deadline, digits=9, offset="+05:30")) == (10_000, 10_000, 0)
+
+
+def test_a_clock_expired_seeded_hold_closes_at_its_deadline_exactly_as_written(svc):
+    """I61 (critic V03): closed_at is expires_at exactly as stored, also in a form the service never issues."""
+    deadline = "2020-06-15T10:20:30.123456+05:30"
+    svc.must_reset(fixture(standard_users(), authorizations=[seeded("a_old", "ada", "bob", 300, deadline)]))
+    ada = svc.client("ada")
+    a = check_authorization(ada.auth("a_old"), status="expired", remaining_amount=0)
+    assert a["expires_at"] == a["closed_at"] == deadline, f"I61: {a}"
+    assert view(ada, deadline) == (10_000, 10_000, 0) and view(ada) == (10_000, 10_000, 0)

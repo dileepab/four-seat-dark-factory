@@ -199,11 +199,12 @@ def test_stage_2_tokens_logins_requests_and_keys_work(prev2, svc):
 
 def test_stage_2_partly_captured_hold_and_display_only_links(prev2, svc):
     """W18.7 (a), D84, I67 on the stage-2 import path: a seeded open hold with a captured_amount, a seeded
-    payment naming it, its payment_ids naming that payment, and an API nonfinal capture on stage 2."""
+    payment naming it, its payment_ids naming that payment, and an API nonfinal capture on stage 2. The link
+    (450) is larger than the base (400), so counting it as a capture is visible (critic E26)."""
     prev2.must_reset(fixture(standard_users()))
     far = shifted(prev2.client("ada").service_now("bob"), seconds=7200, digits=3)
     prev2.must_reset(fixture(standard_users(), payments=[
-        {"id": "p_link", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 50, "authorization_id": "a_part"}],
+        {"id": "p_link", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 450, "authorization_id": "a_part"}],
         authorizations=[{"id": "a_part", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 1_000,
                          "expires_at": far, "created_at": "2026-03-01T00:00:00Z", "captured_amount": 400,
                          "payment_id": "p_link", "payment_ids": ["p_link"]}]))
@@ -218,7 +219,7 @@ def test_stage_2_partly_captured_hold_and_display_only_links(prev2, svc):
     a = check_authorization(ada.auth("a_part"), status="open", captured_amount=500, remaining_amount=500, closed_at=None)
     c, x = a["created_at"], cp["created_at"]
     assert ada.money() == (9_900, 9_400, 500)
-    assert ada.money_at(shifted(c, -1)) == (10_050, 10_050, 0)
+    assert ada.money_at(shifted(c, -1)) == (10_450, 10_450, 0)
     if instant(c) < instant(x):
         assert ada.money_at(c) == (10_000, 9_400, 600), \
             "D84: amount - captured_amount is held from creation, and the display-only link reduces nothing"
