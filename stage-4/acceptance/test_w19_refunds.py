@@ -257,6 +257,24 @@ def test_the_2_53_guard_on_the_credit(svc):
     assert ada.balance() == TWO_53
 
 
+def test_the_guard_comes_after_the_403_the_cap_and_the_funds(svc):
+    """PLAN 3.9 steps 8-12 (D90): a refund that fails the 2^53 guard as well gets the earlier step's error."""
+    svc.must_reset(fixture([user("ada", TWO_53 - 60), user("bob", 0), user("cy", 200), user("dee", 0)]))
+    ada, bob, cy = svc.client("ada"), svc.client("bob"), svc.client("cy")
+    p = expect(ada.pay("bob", 100), 201)                          # ada: 2^53 - 160
+    expect(cy.pay("ada", 150), 201)                               # ada: 2^53 - 10
+    expect(bob.pay("dee", 50), 201)                               # bob: 50
+    pid = p["payment_id"]
+    before = state(svc, [pid])
+    expect_error(cy.refund(pid, 100), 403, "forbidden")                       # 403 before the guard
+    expect_error(bob.refund(pid, 101), 422, "refund_exceeds_payment")         # the cap before the guard
+    expect_error(bob.refund(pid, 100), 409, "insufficient_funds")             # the funds before the guard
+    assert state(svc, [pid]) == before
+    expect(bob.refund(pid, 10), 201)                              # ada: exactly 2^53
+    expect_error(bob.refund(pid, 1), 422, "validation_failed")                # the guard alone
+    assert ada.balance() == TWO_53 and bob.balance() == 40
+
+
 def test_unknown_body_fields_are_ignored(paid):
     w = paid
     r = expect(w.bob.refund(w.pid, body={"amount": 5, "refund_of": "p_other", "to_handle": "cy", "note": "zz",

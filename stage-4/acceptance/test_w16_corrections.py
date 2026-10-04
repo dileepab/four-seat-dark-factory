@@ -504,6 +504,36 @@ def test_the_2_53_guard_on_the_credit(svc):
     assert svc.client("bob").balance() == TWO_53
 
 
+def test_the_funds_come_before_the_guard(svc):
+    """PLAN 3.9 correction steps 12 and 13 (W22.7): a raise ada cannot afford, to bob near 2^53, is 409."""
+    svc.must_reset(fixture([user("ada", 100), user("bob", TWO_53 - 60)]))
+    ada, bob = svc.client("ada"), svc.client("bob")
+    p = expect(ada.pay("bob", 50), 201)                              # ada 50, bob 2^53 - 10
+    pid, at = p["payment_id"], p["created_at"]
+    before = state(svc, [pid])
+    expect_error(ada.correct(pid, 1, 150, at), 409, "insufficient_funds")     # both fail: the funds answer
+    expect_error(ada.correct(pid, 1, 61, at), 422, "validation_failed")       # the guard alone
+    assert state(svc, [pid]) == before
+    expect(ada.correct(pid, 1, 60, at), 201)
+    assert ada.balance() == 40 and bob.balance() == TWO_53
+
+
+def test_the_guard_comes_before_history(svc):
+    """PLAN 3.9 correction steps 13 and 14 (W22.7): ada can afford the raise now, but it takes bob above 2^53 and,
+    backdated to before ada's money arrived, takes ada below 0 then. The guard answers."""
+    svc.must_reset(fixture([user("ada", 0), user("bob", TWO_53 - 60), user("cy", 1_000)]))
+    ada, bob, cy = svc.client("ada"), svc.client("bob"), svc.client("cy")
+    t1 = expect(cy.pay("ada", 500), 201)["created_at"]               # ada 500
+    p = expect(ada.pay("bob", 50), 201)                              # ada 450, bob 2^53 - 10
+    pid, early = p["payment_id"], shifted(t1, -1)
+    before = state(svc, [pid])
+    expect_error(ada.correct(pid, 1, 150, early), 422, "validation_failed")   # both fail: the guard answers
+    expect_error(ada.correct(pid, 1, 60, early), 409, "historical_overdraft")  # history alone
+    assert state(svc, [pid]) == before
+    expect(ada.correct(pid, 1, 60, p["created_at"]), 201)
+    assert ada.balance() == 440 and bob.balance() == TWO_53
+
+
 # ---------------------------------------------------------------- W16.9 history reads
 
 def test_history_follows_the_latest_revision(world):

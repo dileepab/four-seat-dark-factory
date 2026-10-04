@@ -47,7 +47,8 @@ def test_a_batch_returns_one_revision_per_item_in_input_order(three):
             (2, it["amount"], it["effective_at"], it["reason"]), r
     for p in (w.p1, w.p2, w.p3):
         assert instant(b["recorded_at"]) > instant(p["created_at"]), "D100"
-    assert money(w) == (9_920, 2_540, 550, 10), "I57: every item's difference between that payment's two wallets"
+    # before: ada 9900, bob 2550, cy 530, dee 20; p3 -10 (cy +10, dee -10), p1 -20 (ada +20, bob -20), p2 -10 (bob +10, cy -10)
+    assert money(w) == (9_920, 2_540, 530, 10), "I57: every item's difference between that payment's two wallets"
     for p, c in ((w.p1, w.ada), (w.p2, w.bob), (w.p3, w.dee)):
         revs = c.revisions(p["payment_id"])
         assert [set(r) for r in revs] == [REVISION_KEYS, BATCH_REVISION_KEYS], "D97"
@@ -444,7 +445,9 @@ def test_members_of_a_seeded_settlement(svc):
     expect_error(ada.batch([item("p_m1", 1, 90, "2026-01-01T00:00:00Z")]), 422, "incomplete_settlement")
     expect(ada.batch([item("p_m1", 1, 90, "2026-01-01T00:00:00Z"), item("p_m2", 1, 40, "2026-01-01T05:30:00+05:30")]),
            201)
-    expect(ada.batch([item("p_one", 1, 5, "2026-01-01T00:00:00Z")]), 201)
+    # dee holds 0, so lowering p_one would debit dee: the funds rule holds for a one-member settlement (I74, D99)
+    expect_error(ada.batch([item("p_one", 1, 5, "2026-01-01T00:00:00Z")]), 409, "insufficient_funds")
+    expect(ada.batch([item("p_one", 1, 15, "2026-01-01T00:00:00Z")]), 201)            # cy pays 5 more
 
 
 def test_a_refund_of_a_member_is_not_a_member(settled):
@@ -498,6 +501,45 @@ def test_the_2_53_guard(svc):
     expect_error(ada.batch([item(p, 1, 11)]), 422, "validation_failed")
     expect(ada.batch([item(p, 1, 10)]), 201)
     assert bob.balance() == TWO_53
+
+
+def test_the_combined_funds_come_before_the_guard(svc):
+    """PLAN 3.9 batch steps 11 and 12 (W22.7): the first item credits ada above 2^53 and the second debits dee below
+    0, so a check that judged one item at a time would answer the guard. The funds answer: 409."""
+    svc.must_reset(fixture([user("ada", TWO_53 - 300), user("bob", 1_000), user("cy", 1_000), user("dee", 0)],
+                           operators=["u_ada"]))
+    ada, cy, dee = svc.client("ada"), svc.client("cy"), svc.client("dee")
+    p1 = expect(ada.pay("bob", 100), 201)                         # ada 2^53 - 400, bob 1100
+    expect(cy.pay("ada", 390), 201)                               # ada 2^53 - 10, cy 610
+    p2 = expect(cy.pay("dee", 100), 201)                          # cy 510, dee 100
+    expect(dee.pay("bob", 60), 201)                               # dee 40, bob 1160
+    pids = [p1["payment_id"], p2["payment_id"]]
+    before = state(svc, pids)
+    expect_error(ada.batch([item(p1, 1, 0), item(p2, 1, 0)]), 409, "insufficient_funds")     # ada +100, dee -100
+    expect_error(ada.batch([item(p1, 1, 89), item(p2, 1, 60)]), 422, "validation_failed")    # the guard alone
+    expect_error(ada.batch([item(p1, 1, 90), item(p2, 1, 59)]), 409, "insufficient_funds")   # the funds alone
+    assert state(svc, pids) == before
+    check_batch(expect(ada.batch([item(p1, 1, 90), item(p2, 1, 60)]), 201), 2)
+    assert ada.balance() == TWO_53 and dee.balance() == 0
+
+
+def test_the_guard_comes_before_history(svc):
+    """PLAN 3.9 batch steps 12 and 13 (W22.7): the first item, backdated before dee's money arrived, takes dee below 0
+    then; the second takes bob above 2^53. Both are affordable now. The guard answers: 422."""
+    svc.must_reset(fixture([user("ada", 1_000), user("bob", TWO_53 - 15), user("cy", 1_000), user("dee", 0)],
+                           operators=["u_ada"]))
+    ada, bob, cy, dee = svc.client("ada"), svc.client("bob"), svc.client("cy"), svc.client("dee")
+    t1 = expect(cy.pay("dee", 500), 201)["created_at"]            # dee 500
+    ph = expect(dee.pay("cy", 50), 201)                           # dee 450
+    pg = expect(ada.pay("bob", 5), 201)                           # bob 2^53 - 10
+    pids, early = [ph["payment_id"], pg["payment_id"]], shifted(t1, -1)
+    before = state(svc, pids)
+    expect_error(ada.batch([item(ph, 1, 60, early), item(pg, 1, 100)]), 422, "validation_failed")   # both fail
+    expect_error(ada.batch([item(ph, 1, 60, early), item(pg, 1, 15)]), 409, "historical_overdraft")  # history alone
+    expect_error(ada.batch([item(ph, 1, 60), item(pg, 1, 16)]), 422, "validation_failed")           # the guard alone
+    assert state(svc, pids) == before
+    check_batch(expect(ada.batch([item(ph, 1, 60), item(pg, 1, 15)]), 201), 2)
+    assert dee.balance() == 440 and bob.balance() == TWO_53
 
 
 # Seeded history (consistent): dee opens with 300, pays cy 200 at t1, gets 500 from ada at t2, pays bob 100 at t3.
