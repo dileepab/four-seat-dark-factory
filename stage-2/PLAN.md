@@ -9,8 +9,8 @@ Frozen reference: `/Users/Dileepa/dark-factory-v3/stage-1/` with its `PLAN.md`, 
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W7 | builder | Holds API: `GET /me` money fields, authorizations, capture, void, list, expiry, funds judged on `available` | BUILDING (first commit f863da5; changes for plan 45fe2dc before HANDOFF) | — |
-| W8 | builder | Export schema 2 and import of stage-1 exports (upgrade) | PLANNED | — |
+| W7 | builder | Holds API: `GET /me` money fields, authorizations, capture, void, list, expiry, funds judged on `available` | VERIFIED (PASS @ 16adbc0, suite cb62939: 1459 passed --upto 7; npm test 129/129; supplied stage 1 147/147, stage-2 UI checks expected to fail until W9-W11); awaiting critic | 16adbc0 |
+| W8 | builder | Export schema 2 and import of stage-1 exports (upgrade) | HANDED_OFF @ 54acbcd (builder gate: npm test, offline build, suite cb62939 --upto 8 with one suite defect named, 8 builder mutants killed) | 54acbcd |
 | W9 | builder | UI foundation: HTML routes, shell, visual system, signup, login, logout, navigation | PLANNED | — |
 | W10 | builder | Wallet screen `/`: wallet numbers, pay and request forms, activity feed, refresh, uncertain outcomes, upgrade | PLANNED | — |
 | W11 | builder | Requests, split and holds screens | PLANNED | — |
@@ -542,6 +542,8 @@ Each normative line of stage-2.md, condensed (S1-S130), with the acceptance test
 | Plan revisions c090e8c (import holds), 9106249 (D62, builder question), 736690c (D63, verifier Q1) | builder, verifier, critic | 09:16Z-09:20Z | builder (c090e8c) | sent |
 | Liveness resend to critic: stage-2 handoff part 1 (plan review, then W7 review) | critic | 09:36Z | critic 09:36Z: all parts and revisions received; plan review, then W7 | acknowledged |
 | Critic plan review @ 736690c (8 defects, 3 gaps, 3 recommendations; REVIEW.md df4b697) -> plan revision: D43 (4 s, abort), D46 (authorize form on `/` too), D50, D64, D65, I34, I46, I48, 3.5-3.14, W7.3, W7.6, W7.9, W8.2, W9.2, W9.6, W10.3-W10.5, W11.1-W11.4 | builder, verifier, critic | 09:41Z | — | sent |
+| HANDOFF W7 @ 16adbc0 (builder) | verifier, critic | 09:54Z | verifier PASS 10:07Z (suite cb62939) | awaiting critic |
+| HANDOFF W8 @ 54acbcd (builder) | verifier, critic | 10:13Z | — | awaiting verdicts |
 
 ## 8. Stage close
 
