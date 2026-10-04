@@ -46,6 +46,7 @@ It needs Python 3.11+ with `pytest`, `httpx` and Playwright with Chromium. It us
 | `test_w10_uncertain.py` | W10.3, W10.7: lost responses, retries, the upgrade in the browser |
 | `test_w11_requests_ui.py`, `test_w11_split_ui.py`, `test_w11_authorizations_ui.py` | W11.1-W11.3 |
 | `test_w11_states.py` | W11.4: every screen in every named state at both widths (I46 and screenshots) |
+| `test_w13_presentation.py` | W13.1 (an amount to pay is not coloured as money received), W13.2 (the expiry text is one line at 375) |
 
 Each test carries `item(n)`, the highest work item it needs. `--upto n` runs the checks up to Wn.
 

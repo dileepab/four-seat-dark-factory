@@ -8,7 +8,7 @@
 # the import-into-another-container checks) and P from stage-1/ (the previous service of
 # the upgrade checks). It waits for /health, runs the whole suite, and removes them.
 #
-#   --upto N     only checks for work items up to WN (default 11 = everything). The stage-1
+#   --upto N     only checks for work items up to WN (default 13 = everything). The stage-1
 #                regression checks (items 1-5) always run.
 #   --name P     container/image name prefix (default pf-verifier-acc). Use pf-<seat>-acc.
 #   --port P     first of 16 host ports to use (default 18201). builder 181xx, verifier 182xx,
@@ -29,7 +29,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 STAGE_DIR="$(dirname "$HERE")"
 PY="${PYTHON:-$HOME/df-spec/.venv/bin/python}"
-UPTO=11
+UPTO=13
 NAME=pf-verifier-acc
 PORT=18201
 BASE_URL=""

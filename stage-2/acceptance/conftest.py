@@ -10,7 +10,7 @@ Options:
   --container-prefix P    docker name prefix for containers the container checks start
   --spare-port N          first of three free host ports for the container checks
   --shots DIR             where the browser checks save one screenshot per named UI state
-  --upto N                run only checks for work items up to WN (default 11: everything).
+  --upto N                run only checks for work items up to WN (default 13: everything).
                           Stage-1 regression checks carry items 1 to 5 and always run.
 
 Every test carries `item(n)`: the work item whose behaviour it needs. A verdict on
@@ -44,11 +44,11 @@ def pytest_addoption(parser):
     g.addoption("--container-prefix", default="pf-verifier-acc")
     g.addoption("--spare-port", type=int, default=18210)
     g.addoption("--shots", default=None)
-    g.addoption("--upto", type=int, default=11)
+    g.addoption("--upto", type=int, default=13)
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "item(n): the highest work item (W1..W11) this check needs")
+    config.addinivalue_line("markers", "item(n): the highest work item (W1..W13) this check needs")
     config.addinivalue_line("markers", "container: starts its own containers with docker")
 
 
