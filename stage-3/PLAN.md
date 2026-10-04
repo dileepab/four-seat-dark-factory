@@ -13,7 +13,7 @@ Frozen references: `stage-1/` (accepted at 4baf8d9) and `stage-2/` (accepted at 
 | W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | BLOCKED, tests only (PASS at 0acff74 with suite b4f6d16; 1268dd8, revised in 0acff74; the critic's review 4d64dfa: T05 has no test; W18.8) | 0acff74 |
 | W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | BLOCKED, tests only (PASS at 0acff74 with suite b4f6d16; 951904d, revised in 0acff74; the critic's review 4d64dfa: K12, K25b have no test; W18.8) | 0acff74 |
 | W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | BLOCKED, tests only (PASS at 0acff74 with suite b4f6d16; f80fc0d, revised in 0acff74; the critic's review 4d64dfa: E14, E16, E26 have no test; W18.8) | 0acff74 |
-| W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | BUILDING (first suite f5df9a1 at 14:11Z; trace filled from it; gap criteria W18.7 requested at 14:15Z and met in b4f6d16 at 14:38Z with the two test races fixed; verdict on 0acff74 running) | b4f6d16 |
+| W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | BUILDING (first suite f5df9a1 at 14:11Z; trace filled from it; gap criteria W18.7 requested at 14:15Z and met in b4f6d16 at 14:38Z with the two test races fixed; W18.8, the critic's nine, in 3c5b827 at 15:03Z) | 3c5b827 |
 
 Item numbers continue from stage 2 (W1–W13). States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
 
@@ -260,6 +260,7 @@ Specification: all of `stage-3.md`, and `stage-1.md` and `stage-2.md` as they st
   - K25b (D81): `effective_at` 200 ms after a fresh service time mark is 422; if a slow host accepts it, the revision's `effective_at` is not later than its `recorded_at`.
   - E14 and E16 (3.11): a schema-3 snapshot whose cutoff exceeds the state's largest `seq`, and a hold whose `base_captured_amount` plus captures differs from `captured_amount`, are 422 with nothing changed.
   - E26 (W18.7a): on the stage-2 path, a display-only link larger than the base (`p_link` 450, `captured_amount` 400, an API capture of 100) still imports with 204, and the hold holds 600 from its creation and 500 from the capture.
+  - Met in 3c5b827 (15:03Z): each new test fails on its change applied to a copy of 0acff74 (verifier's mutcheck_s3.py), and the changed files pass on 0acff74 ("696 passed", clean worktree, --upto 17).
 
 ## 5. Decisions
 
@@ -377,6 +378,7 @@ Each normative line of stage-3.md, condensed (T1-T70), with the acceptance tests
 | VERDICT W14-W17 (verifier): PASS at 0acff74 with suite b4f6d16, clean worktree: offline build and run; npm 203/203; acceptance --upto 17 "2586 passed in 813.65s", nothing deselected, browser tests at 375 and 1280 px (92 screenshots); harness s3-v01 (host) and s3-v02 (isolated): stages 1-3 pass (147, 35, 6), stage 4 fails, "claimed stage: 3 on the shipped checks" | critic, planner | by 14:55Z | planner | critic: BLOCKED per item (4d64dfa) |
 | Verifier: first W18 suite f5df9a1 (14:11Z) with a trace map -> planner: trace filled (one test name corrected, T5); gaps W18.7a-c | verifier, critic, builder | 14:15Z | — | sent |
 | Critic review W14-W17 @ 0acff74 (REVIEW.md 4d64dfa, 14:59Z): BLOCKED per item, tests only: W14 G16, Q04, V03; W15 T05; W16 K12, K25b; W17 E14, E16, E26; 112 of 121 mutants killed; W18.7 (b), (c) met -> planner 15:01Z: all nine are plan rules; tests only (W18.8); the PASS at 0acff74 carries over; the critic reruns the nine on the new suite | verifier, critic, builder | 15:01Z | — | sent |
+| Verifier: suite 3c5b827 (W18.8, tests only): the nine tests, each failing on its change; the changed files on 0acff74 "696 passed" | critic, planner | 15:03Z | planner 15:07Z | the critic reruns the nine |
 
 ## 8. Stage close
 
