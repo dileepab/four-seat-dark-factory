@@ -40,7 +40,7 @@ export async function signup(ctx: Ctx): Promise<Result> {
   const st = store.state;
   const user: User = {
     id: newId('u', (id) => st.users.has(id)), email, emailKey: key, password: hash,
-    displayName, handle, balance: 0, seq: nextSeq(st),
+    displayName, handle, balance: 0, opening: 0, seq: nextSeq(st),
   };
   addUser(st, user);
   return { status: 201, body: session(user, issueToken(st, user.id)) };

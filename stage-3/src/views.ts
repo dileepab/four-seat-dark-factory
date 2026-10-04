@@ -55,7 +55,7 @@ export function splitView(st: State, s: Split): Record<string, unknown> {
   };
 }
 
-// The authorization as a read at `nowMs` sees it (plan 3.6, D51).
+// The authorization as a read at `nowMs` sees it (plan 3.6, D51; stage 3 adds closed_at).
 export function authorizationView(st: State, a: Authorization, nowMs: number): Record<string, unknown> {
   return {
     authorization_id: a.id,
@@ -74,7 +74,15 @@ export function authorizationView(st: State, a: Authorization, nowMs: number): R
     payment_id: a.paymentId,
     payment_ids: [...a.paymentIds],
     created_at: a.createdAt,
+    closed_at: closedAt(a, nowMs),
   };
+}
+
+// When it closed (I61, D71): a void's or capture's issued time; for an open authorization
+// past its deadline, the deadline exactly as stored; null while open.
+export function closedAt(a: Authorization, nowMs: number): string | null {
+  if (a.closedAt !== null) return a.closedAt;
+  return statusAt(a, nowMs) === 'expired' ? a.expiresAt : null;
 }
 
 // One page of `items` (creation order) newest first: skip `offset` matches, take `limit`.

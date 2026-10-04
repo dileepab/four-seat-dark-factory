@@ -33,7 +33,7 @@ export function commitTransfer(st: State, t: Transfer): Payment {
 
 // Record the payment only; the caller applies the balance changes in the same step.
 export function recordPayment(st: State, t: Transfer): Payment {
-  const payment: Payment = {
+  return addPayment(st, {
     id: newId('p', (id) => st.paymentsById.has(id)),
     fromUserId: t.from.id,
     toUserId: t.to.id,
@@ -45,7 +45,5 @@ export function recordPayment(st: State, t: Transfer): Payment {
     authorizationId: t.authorizationId,
     createdAt: t.createdAt,
     seq: nextSeq(st),
-  };
-  addPayment(st, payment);
-  return payment;
+  });
 }

@@ -65,7 +65,8 @@ async function dispatch(req: http.IncomingMessage): Promise<Result> {
     throw notFound(`no route for ${method} on this path`);
   }
   const ctx: Ctx = {
-    method, path: match.path, query, headers: req.headers, params: match.params, body, tooLarge,
+    method, path: match.path, query, rawQuery: q < 0 ? '' : target.slice(q + 1), headers: req.headers,
+    params: match.params, body, tooLarge,
     maxDepth: match.route.testBody ? TEST_BODY_DEPTH : MAX_DEPTH,
   };
   return await match.route.handler(ctx);

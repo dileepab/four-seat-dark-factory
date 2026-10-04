@@ -36,8 +36,10 @@ export function createAuthorization(ctx: Ctx): Result {
     if (availableOf(st, caller, now.ms) < amount) {
       throw conflict('insufficient_funds', 'your available balance is below the amount');
     }
-    const expiresMs = Math.min(now.ms + st.authorizationTtl * 1000, MAX_TS_MS);
-    const authorization: Authorization = {
+    // One issued timestamp (D67); the deadline is that plus the lifetime.
+    const createdAt = issue(st, now);
+    const expiresMs = Math.min(Date.parse(createdAt) + st.authorizationTtl * 1000, MAX_TS_MS);
+    const authorization = addAuthorization(st, {
       id: newId('a', (id) => st.authorizationsById.has(id)),
       fromUserId: caller.id,
       toUserId: to.id,
@@ -50,11 +52,12 @@ export function createAuthorization(ctx: Ctx): Result {
       expiresMs,
       paymentId: null,
       paymentIds: [],
-      createdAt: issue(st, now),
+      createdAt,
       closedAt: null,
+      seededClosed: false,
+      baseCaptured: 0,
       seq: nextSeq(st),
-    };
-    addAuthorization(st, authorization);
+    });
     return authorizationView(st, authorization, now.ms);
   });
 }

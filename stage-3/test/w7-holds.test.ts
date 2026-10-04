@@ -27,7 +27,7 @@ beforeEach(async () => {
 const key = () => randomUUID();
 const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00$/;
 const AUTHORIZATION_FIELDS = [
-  'amount', 'authorization_id', 'captured_amount', 'created_at', 'currency', 'expires_at', 'from_handle',
+  'amount', 'authorization_id', 'captured_amount', 'closed_at', 'created_at', 'currency', 'expires_at', 'from_handle',
   'from_user_id', 'note', 'payment_id', 'payment_ids', 'remaining_amount', 'status', 'to_handle', 'to_user_id',
   'visibility',
 ];

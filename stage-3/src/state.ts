@@ -5,6 +5,7 @@
 // password hashing is asynchronous, and code after it re-reads `store.state`.
 
 import { randomBytes } from 'node:crypto';
+import { tsKey } from './instant.ts';
 
 export type Visibility = 'public' | 'private';
 export type RequestStatus = 'pending' | 'paid' | 'declined' | 'cancelled';
@@ -36,8 +37,22 @@ export interface User {
   password: PasswordHash;
   displayName: string;
   handle: string;
-  balance: number;
+  balance: number; // the current total, every payment at its latest revision
+  opening: number; // the balance before any of the user's payments (plan 3.7); never changes
   seq: number;
+}
+
+// One revision of a payment (plan 3.7): revision 1 is the payment as made, every later one a
+// correction. Revisions are only ever appended.
+export interface Revision {
+  revision: number;
+  amount: number;
+  effectiveAt: string; // exactly as given (or the payment's created_at for revision 1)
+  effKey: string; // instant.ts key of effectiveAt
+  recordedAt: string; // issued by the service
+  recKey: string;
+  reason: string; // "" for revision 1
+  seq: number; // the creation sequence when it was recorded (D70)
 }
 
 export interface Payment {
@@ -50,9 +65,13 @@ export interface Payment {
   requestId: string | null;
   settlementId: string | null;
   authorizationId: string | null; // the authorization a capture took this payment from
-  createdAt: string;
+  createdAt: string; // as issued, or exactly as seeded
+  createdKey: string; // instant.ts key of createdAt
+  revisions: Revision[]; // 1..n; `amount` above is revision 1's
   seq: number;
 }
+
+export type NewPayment = Omit<Payment, 'createdKey' | 'revisions'> & { revisions?: Revision[] };
 
 export interface PayRequest {
   id: string;
@@ -103,12 +122,22 @@ export interface Authorization {
   status: AuthorizationStatus;
   expiresAt: string; // exactly as issued or seeded
   expiresMs: number; // its instant, whole milliseconds rounded up (time.ts)
+  expiresKey: string; // its exact instant (instant.ts), for historical views
   paymentId: string | null; // the latest capture
   paymentIds: string[]; // every capture, in order
-  createdAt: string;
+  createdAt: string; // as issued, or exactly as seeded
+  createdKey: string;
   closedAt: string | null; // when a void or a capture closed it; null while open and for clock expiry
+  closedKey: string | null; // its exact instant
+  // Seeded as captured, voided or expired: it holds nothing at any instant (plan 3.8, D71).
+  seededClosed: boolean;
+  // Captured before its history starts (a seeded captured_amount without capture payments):
+  // counted from creation. Captures made through the API are payments (capturesOf).
+  baseCaptured: number;
   seq: number;
 }
+
+export type NewAuthorization = Omit<Authorization, 'expiresKey' | 'createdKey' | 'closedKey'>;
 
 // A completed idempotent call: the parsed body and the exact response it produced.
 export interface IdemRecord {
@@ -139,6 +168,9 @@ export interface State {
   holds: Map<string, Set<Authorization>>; // payer id -> stored-open authorizations (see heldBy)
   operators: Set<string>;
   idem: Map<string, IdemRecord>; // see idempotency.ts for the map key
+  paymentsOf: Map<string, Payment[]>; // user id -> the payments they sent or received
+  capturesOf: Map<string, Payment[]>; // authorization id -> the payments linked to it
+  authorizationsOf: Map<string, Authorization[]>; // payer id -> their authorizations
   seq: number; // creation counter, the tie-break for equal timestamps
   lastTs: string; // the latest timestamp issued
 }
@@ -163,6 +195,9 @@ export function emptyState(): State {
     holds: new Map(),
     operators: new Set(),
     idem: new Map(),
+    paymentsOf: new Map(),
+    capturesOf: new Map(),
+    authorizationsOf: new Map(),
     seq: 0,
     lastTs: formatTs(Date.now()),
   };
@@ -180,11 +215,10 @@ export function formatTs(ms: number): string {
   return new Date(ms).toISOString().replace('Z', '+00:00');
 }
 
-// A timestamp that is never earlier than any timestamp this state issued before.
+// A timestamp strictly later than every timestamp this state issued before (D67): the wall
+// clock, or the last issued one plus a millisecond when the wall clock has not moved past it.
 export function nextTs(st: State): string {
-  const now = formatTs(Date.now());
-  if (now > st.lastTs) st.lastTs = now;
-  return st.lastTs;
+  return issue(st, clock(st));
 }
 
 // The service clock (D49): the later of the wall clock and the last issued timestamp. Every
@@ -201,10 +235,11 @@ export function clock(st: State): Now {
   return { ts, ms: Date.parse(ts) };
 }
 
-// Record the operation's `now` as issued (it is never earlier than lastTs) and return it.
+// Issue the write's one timestamp (D67): the operation's `now` when it is later than the last
+// issued timestamp, else that one plus a millisecond. Every record of the write shares it.
 export function issue(st: State, now: Now): string {
-  if (now.ts > st.lastTs) st.lastTs = now.ts;
-  return now.ts;
+  st.lastTs = now.ts > st.lastTs ? now.ts : formatTs(Date.parse(st.lastTs) + 1);
+  return st.lastTs;
 }
 
 export function nextSeq(st: State): number {
@@ -226,9 +261,29 @@ export function addUser(st: State, user: User): void {
   st.usersByEmail.set(user.emailKey, user);
 }
 
-export function addPayment(st: State, payment: Payment): void {
+function indexed<K, V>(map: Map<K, V[]>, key: K): V[] {
+  let list = map.get(key);
+  if (!list) map.set(key, (list = []));
+  return list;
+}
+
+// Add a payment; without `revisions` it gets revision 1 from its own fields (plan 3.7).
+export function addPayment(st: State, input: NewPayment): Payment {
+  const createdKey = tsKey(input.createdAt);
+  const payment: Payment = {
+    ...input,
+    createdKey,
+    revisions: input.revisions ?? [{
+      revision: 1, amount: input.amount, effectiveAt: input.createdAt, effKey: createdKey,
+      recordedAt: input.createdAt, recKey: createdKey, reason: '', seq: input.seq,
+    }],
+  };
   st.payments.push(payment);
   st.paymentsById.set(payment.id, payment);
+  indexed(st.paymentsOf, payment.fromUserId).push(payment);
+  if (payment.toUserId !== payment.fromUserId) indexed(st.paymentsOf, payment.toUserId).push(payment);
+  if (payment.authorizationId !== null) indexed(st.capturesOf, payment.authorizationId).push(payment);
+  return payment;
 }
 
 export function addRequest(st: State, request: PayRequest): void {
@@ -236,14 +291,37 @@ export function addRequest(st: State, request: PayRequest): void {
   st.requestsById.set(request.id, request);
 }
 
-export function addAuthorization(st: State, a: Authorization): void {
+export function addAuthorization(st: State, input: NewAuthorization): Authorization {
+  const a: Authorization = {
+    ...input,
+    createdKey: tsKey(input.createdAt),
+    expiresKey: tsKey(input.expiresAt),
+    closedKey: input.closedAt === null ? null : tsKey(input.closedAt),
+  };
   st.authorizations.push(a);
   st.authorizationsById.set(a.id, a);
+  indexed(st.authorizationsOf, a.fromUserId).push(a);
   if (a.status === 'open') {
     let open = st.holds.get(a.fromUserId);
     if (!open) st.holds.set(a.fromUserId, (open = new Set()));
     open.add(a);
   }
+  return a;
+}
+
+// Records seeded or imported with earlier instants than records made after them: put the
+// record arrays in time order (instant, then creation), as every list reads them newest first.
+// Records made afterwards always carry the latest instant (D67), so appending keeps the order.
+export function sortByTime(st: State): void {
+  const order = (a: { createdKey: string; seq: number }, b: { createdKey: string; seq: number }) =>
+    (a.createdKey < b.createdKey ? -1 : a.createdKey > b.createdKey ? 1 : a.seq - b.seq);
+  st.payments.sort(order);
+  st.authorizations.sort(order);
+  st.requests.sort((a, b) => {
+    const ka = tsKey(a.createdAt);
+    const kb = tsKey(b.createdAt);
+    return ka < kb ? -1 : ka > kb ? 1 : a.seq - b.seq;
+  });
 }
 
 // The status a read at `nowMs` shows: an open authorization is expired from its deadline on.
@@ -260,6 +338,7 @@ export function remainingAt(a: Authorization, nowMs: number): number {
 export function closeAuthorization(st: State, a: Authorization, status: 'captured' | 'voided', ts: string): void {
   a.status = status;
   a.closedAt = ts;
+  a.closedKey = tsKey(ts);
   st.holds.get(a.fromUserId)?.delete(a);
 }
 

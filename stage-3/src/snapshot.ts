@@ -8,9 +8,10 @@ import { invalid } from './errors.ts';
 import { cpLength, emailKey, HANDLE_RE, isEmail } from './fields.ts';
 import { recordKey } from './idempotency.ts';
 import { isObject, type JsonObject } from './json.ts';
+import { instantKey, tsKey } from './instant.ts';
 import {
-  addAuthorization, addPayment, addRequest, addUser, AUTHORIZATION_STATUSES, emptyState, MAX_AMOUNT, MAX_BALANCE,
-  MAX_TTL, REQUEST_STATUSES, VISIBILITIES,
+  addAuthorization, addPayment, addRequest, addUser, AUTHORIZATION_STATUSES, emptyState, formatTs, MAX_AMOUNT,
+  MAX_BALANCE, MAX_TTL, REQUEST_STATUSES, sortByTime, VISIBILITIES,
   type AuthorizationStatus, type PasswordHash, type RequestStatus, type State, type Visibility,
 } from './state.ts';
 import { rfc3339Ms } from './time.ts';
@@ -91,6 +92,11 @@ function isTs(v: unknown): v is string {
   return typeof v === 'string' && TS_RE.test(v) && !Number.isNaN(Date.parse(v));
 }
 
+// A record time: issued by the service, or seeded in any instant form (plan 3.4, 3.10).
+function isInstant(v: unknown): v is string {
+  return instantKey(v) !== null;
+}
+
 function isRef(v: unknown): v is string | null {
   return v === null || typeof v === 'string';
 }
@@ -140,10 +146,12 @@ export function importState(body: JsonObject): State {
   if (v2) st.authorizationTtl = s.authorization_ttl_seconds as number;
   let seq = s.seq as number;
   let lastTs = s.last_ts as string;
+  // The clock starts at the latest time in the state, in the service's own form (rounded up to
+  // the millisecond when a seeded time carries more digits).
   const see = (entitySeq: unknown, ts: string | null, what: string) => {
     check(isInt(entitySeq, 0, Number.MAX_SAFE_INTEGER), `${what}.seq must be a non-negative integer`);
     seq = Math.max(seq, entitySeq as number);
-    if (ts !== null && ts > lastTs) lastTs = ts;
+    if (ts !== null && tsKey(ts) > tsKey(lastTs)) lastTs = formatTs(rfc3339Ms(ts) as number);
   };
 
   list(s, 'users').forEach((u, i) => {
@@ -157,7 +165,7 @@ export function importState(body: JsonObject): State {
     addUser(st, {
       id: u.id as string, email: u.email as string, emailKey: emailKey(u.email as string),
       password: passwordRecord(u.password, `${what}.password`), displayName: u.display_name as string,
-      handle: u.handle as string, balance: u.balance as number, seq: u.seq as number,
+      handle: u.handle as string, balance: u.balance as number, opening: 0, seq: u.seq as number,
     });
   });
 
@@ -177,7 +185,7 @@ export function importState(body: JsonObject): State {
     check(typeof p.visibility === 'string' && VISIBILITIES.includes(p.visibility), `${what}.visibility must be public or private`);
     check(isRef(p.request_id) && isRef(p.settlement_id) && (!v2 || isRef(p.authorization_id)),
       `${what} links must be strings or null`);
-    check(isTs(p.created_at), `${what}.created_at must be a timestamp`);
+    check(isInstant(p.created_at), `${what}.created_at must be an instant`);
     see(p.seq, p.created_at as string, what);
     addPayment(st, {
       id: p.id as string, fromUserId: p.from_user_id as string, toUserId: p.to_user_id as string,
@@ -259,17 +267,18 @@ export function importState(body: JsonObject): State {
       check(isRef(a.payment_id), `${what}.payment_id must be a string or null`);
       check(Array.isArray(a.payment_ids) && (a.payment_ids as unknown[]).every((id) => typeof id === 'string'),
         `${what}.payment_ids must be an array of strings`);
-      check(isTs(a.created_at), `${what}.created_at must be a timestamp`);
+      check(isInstant(a.created_at), `${what}.created_at must be an instant`);
       check(a.closed_at === null || isTs(a.closed_at), `${what}.closed_at must be a timestamp or null`);
       see(a.seq, a.created_at as string, what);
-      if (a.closed_at !== null && (a.closed_at as string) > lastTs) lastTs = a.closed_at as string;
+      if (a.closed_at !== null) see(a.seq, a.closed_at as string, what);
       addAuthorization(st, {
         id: a.id as string, fromUserId: a.from_user_id as string, toUserId: a.to_user_id as string,
         amount: a.amount as number, capturedAmount: a.captured_amount as number, note: a.note as string,
         visibility: a.visibility as Visibility, status: a.status as AuthorizationStatus,
         expiresAt: a.expires_at as string, expiresMs: expiresMs as number,
         paymentId: a.payment_id as string | null, paymentIds: [...(a.payment_ids as string[])],
-        createdAt: a.created_at as string, closedAt: a.closed_at as string | null, seq: a.seq as number,
+        createdAt: a.created_at as string, closedAt: a.closed_at as string | null,
+        seededClosed: false, baseCaptured: 0, seq: a.seq as number,
       });
     });
   }
@@ -295,6 +304,18 @@ export function importState(body: JsonObject): State {
 
   st.seq = seq;
   st.lastTs = lastTs;
+  // Opening balances (plan 3.7, D69): the imported balance minus the net of all the user's
+  // payments. A captured amount not matched by linked capture payments counts from creation.
+  for (const user of st.users.values()) {
+    let net = 0;
+    for (const p of st.paymentsOf.get(user.id) ?? []) net += p.fromUserId === user.id ? -p.amount : p.amount;
+    user.opening = user.balance - net;
+  }
+  for (const a of st.authorizations) {
+    const linked = (st.capturesOf.get(a.id) ?? []).reduce((sum, p) => sum + p.amount, 0);
+    a.baseCaptured = Math.max(0, a.capturedAmount - linked);
+  }
+  sortByTime(st);
 
   // The holds still open at the import's time (its clock: never before the imported
   // timestamps) must fit within each payer's total. One past its deadline holds nothing: its

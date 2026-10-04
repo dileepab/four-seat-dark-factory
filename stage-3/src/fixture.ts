@@ -6,9 +6,10 @@ import { has, isObject, type JsonObject } from './json.ts';
 import { hashPassword, SEED_COST } from './passwords.ts';
 import {
   addAuthorization, addPayment, addRequest, addUser, AUTHORIZATION_STATUSES, DEFAULT_TTL, emptyState, formatTs,
-  MAX_AMOUNT, MAX_BALANCE, MAX_TTL, nextSeq, REQUEST_STATUSES, VISIBILITIES,
+  MAX_AMOUNT, MAX_BALANCE, MAX_TTL, nextSeq, REQUEST_STATUSES, sortByTime, VISIBILITIES,
   type AuthorizationStatus, type RequestStatus, type State, type Visibility,
 } from './state.ts';
+import { instantKey, msKey } from './instant.ts';
 import { rfc3339Ms } from './time.ts';
 
 const MAX_USERS = 1000;
@@ -32,6 +33,7 @@ interface SeedPayment {
   requestId: string | null;
   settlementId: string | null;
   authorizationId: string | null;
+  createdAt: string | null; // exactly as seeded; null takes the reset's timestamp
 }
 
 interface SeedRequest {
@@ -57,6 +59,7 @@ interface SeedAuthorization {
   expiresMs: number;
   paymentId: string | null;
   paymentIds: string[];
+  createdAt: string | null; // exactly as seeded; null takes the reset's timestamp
 }
 
 interface Fixture {
@@ -106,9 +109,20 @@ function absent(v: unknown): boolean {
   return v === undefined || v === null;
 }
 
+// An optional seeded `created_at` (plan 3.10, D68): when present, an instant (3.4) at or before
+// the reset's own timestamp, kept exactly as written.
+function seededCreatedAt(o: JsonObject, what: string, resetKey: string): string | null {
+  if (!has(o, 'created_at')) return null;
+  const key = instantKey(o.created_at);
+  check(key !== null, `${what}.created_at must be an RFC 3339 instant with an offset, at most 64 characters`);
+  check((key as string) <= resetKey, `${what}.created_at must not be later than the reset`);
+  return o.created_at as string;
+}
+
 // Validate everything against the reset's own time `resetMs` (the seeded holds that count are
 // the ones still open then). Nothing here touches the live state.
 export function validateFixture(body: JsonObject, resetMs: number): Fixture {
+  const resetKey = msKey(resetMs);
   check(typeof body.currency === 'string' && /^[A-Z]{3}$/.test(body.currency), 'currency must be three capital letters');
   check(isInt(body.minor_units) && [0, 2, 3].includes(body.minor_units), 'minor_units must be 0, 2 or 3');
 
@@ -159,6 +173,7 @@ export function validateFixture(body: JsonObject, resetMs: number): Fixture {
       visibility: visibility as Visibility, requestId: optionalRef(o.request_id, `${what}.request_id`),
       settlementId: optionalRef(o.settlement_id, `${what}.settlement_id`),
       authorizationId: optionalRef(o.authorization_id, `${what}.authorization_id`),
+      createdAt: seededCreatedAt(o, what, resetKey),
     };
   });
 
@@ -236,6 +251,7 @@ export function validateFixture(body: JsonObject, resetMs: number): Fixture {
       amount, capturedAmount: captured as number, note: optionalString(o.note, `${what}.note`),
       visibility: visibility as Visibility, status: status as AuthorizationStatus,
       expiresAt: expiresAt as string, expiresMs: expiresMs as number, paymentId, paymentIds,
+      createdAt: seededCreatedAt(o, what, resetKey),
     };
   });
   for (const u of users) {
@@ -257,25 +273,42 @@ export async function buildState(fixture: Fixture, resetMs: number): Promise<Sta
   st.minorUnits = fixture.minorUnits;
   st.authorizationTtl = fixture.ttl;
   st.lastTs = formatTs(resetMs);
+  // Opening balances (plan 3.7, D69): the seeded balance minus the net of the user's seeded
+  // payments at their seeded amounts. The seeded history is not checked for consistency.
+  const net = new Map<string, number>();
+  for (const p of fixture.payments) {
+    net.set(p.fromUserId, (net.get(p.fromUserId) ?? 0) - p.amount);
+    net.set(p.toUserId, (net.get(p.toUserId) ?? 0) + p.amount);
+  }
   fixture.users.forEach((u, i) => {
     addUser(st, {
       id: u.id, email: u.email, emailKey: emailKey(u.email), password: hashes[i],
-      displayName: u.displayName, handle: u.handle, balance: u.balance, seq: nextSeq(st),
+      displayName: u.displayName, handle: u.handle, balance: u.balance,
+      opening: u.balance - (net.get(u.id) ?? 0), seq: nextSeq(st),
     });
   });
-  // Seeded records take the reset's time; fixture order is creation order (D15). A seeded
-  // authorization that is already closed closed at that time too; an open one past its
-  // deadline reads expired at once.
+  // Seeded records take their supplied created_at, else the reset's time; fixture order is
+  // creation order (D15). A seeded authorization that is already closed closed at the reset's
+  // time and holds nothing at any instant (D71); an open one past its deadline reads expired.
   const ts = st.lastTs;
+  const linked = new Map<string, number>(); // authorization id -> seeded payments linked to it
   for (const p of fixture.payments) {
-    addPayment(st, { ...p, createdAt: ts, seq: nextSeq(st) });
+    addPayment(st, { ...p, createdAt: p.createdAt ?? ts, seq: nextSeq(st) });
+    if (p.authorizationId !== null) linked.set(p.authorizationId, (linked.get(p.authorizationId) ?? 0) + p.amount);
   }
   for (const r of fixture.requests) {
     addRequest(st, { ...r, createdAt: ts, seq: nextSeq(st) });
   }
   for (const a of fixture.authorizations) {
-    addAuthorization(st, { ...a, createdAt: ts, closedAt: a.status === 'open' ? null : ts, seq: nextSeq(st) });
+    addAuthorization(st, {
+      ...a, createdAt: a.createdAt ?? ts, closedAt: a.status === 'open' ? null : ts,
+      seededClosed: a.status !== 'open',
+      // A seeded captured amount not matched by seeded capture payments counts from creation.
+      baseCaptured: Math.max(0, a.capturedAmount - (linked.get(a.id) ?? 0)),
+      seq: nextSeq(st),
+    });
   }
   for (const id of fixture.operators) st.operators.add(id);
+  sortByTime(st);
   return st;
 }

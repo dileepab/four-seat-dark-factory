@@ -379,9 +379,15 @@ describe('the clock after an import that ran ahead (D49)', () => {
     assert.deepEqual((await ada.get('/me')).body, me, 'the refused capture changed nothing');
     const captured = await bob.post('/authorizations/a_after/capture', { json: { amount: 50, final: false }, key: key() });
     assert.equal(captured.status, 201, captured.text);
-    assert.equal(captured.body.created_at, AHEAD, 'captured at the imported clock, before its deadline');
+    // Checked at the imported clock, before the deadline; recorded at the next issued timestamp,
+    // a millisecond later (stage 3, D67).
+    assert.equal(captured.body.created_at, '2099-01-01T00:00:00.001+00:00', 'issued strictly after the imported clock');
+    // The capture's issued timestamp is a_after's deadline, so the clock now stands at it and the
+    // rest of the hold has expired.
     const after = (await ada.get('/me')).body;
-    assert.deepEqual([after.total, after.held], [me.total - 50, 150]);
+    assert.deepEqual([after.total, after.held], [me.total - 50, 0]);
+    const [aAfter] = (await ada.get('/authorizations')).body.authorizations.filter((a: any) => a.authorization_id === 'a_after');
+    assert.deepEqual([aAfter.status, aAfter.captured_amount, aAfter.closed_at], ['expired', 50, deadline.a_after]);
   });
 });
 
