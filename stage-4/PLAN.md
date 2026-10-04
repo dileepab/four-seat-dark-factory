@@ -276,6 +276,7 @@ Each normative line of stage-4.md, condensed (F1–F43), with the acceptance tes
 
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
+| Stage-4 handoff, parts 1-16 (plan 76b3707) | builder, verifier, critic | 15:51Z | — | sent |
 
 ## 8. Stage close
 
