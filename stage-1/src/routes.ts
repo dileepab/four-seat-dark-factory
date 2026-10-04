@@ -4,6 +4,8 @@ import type { Ctx, Result } from './context.ts';
 import { login, signup } from './handlers/auth.ts';
 import { me } from './handlers/me.ts';
 import { activity, createPayment } from './handlers/payments.ts';
+import { cancelRequest, createRequest, declineRequest, listRequests, payRequest } from './handlers/requests.ts';
+import { createSplit } from './handlers/splits.ts';
 import { health, reset } from './handlers/system.ts';
 
 export interface Route {
@@ -21,6 +23,12 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/me', handler: me },
   { method: 'POST', path: '/payments', handler: createPayment },
   { method: 'GET', path: '/activity', handler: activity },
+  { method: 'POST', path: '/requests', handler: createRequest },
+  { method: 'GET', path: '/requests', handler: listRequests },
+  { method: 'POST', path: '/requests/{id}/pay', handler: payRequest },
+  { method: 'POST', path: '/requests/{id}/decline', handler: declineRequest },
+  { method: 'POST', path: '/requests/{id}/cancel', handler: cancelRequest },
+  { method: 'POST', path: '/splits', handler: createSplit },
 ];
 
 export interface RouteMatch {

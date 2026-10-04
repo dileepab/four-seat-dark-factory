@@ -61,6 +61,22 @@ export interface PayRequest {
   seq: number;
 }
 
+export interface Share {
+  handle: string;
+  amount: number;
+}
+
+export interface Split {
+  id: string;
+  creatorId: string;
+  amount: number;
+  note: string;
+  shares: Share[];
+  requestIds: string[]; // one per participant other than the creator, in handle order
+  createdAt: string;
+  seq: number;
+}
+
 // A completed idempotent call: the parsed body and the exact response it produced.
 export interface IdemRecord {
   userId: string;
@@ -82,6 +98,7 @@ export interface State {
   paymentsById: Map<string, Payment>;
   requests: PayRequest[]; // creation order
   requestsById: Map<string, PayRequest>;
+  splits: Map<string, Split>;
   operators: Set<string>;
   idem: Map<string, IdemRecord>; // see idempotency.ts for the map key
   seq: number; // creation counter, the tie-break for equal timestamps
@@ -100,6 +117,7 @@ export function emptyState(): State {
     paymentsById: new Map(),
     requests: [],
     requestsById: new Map(),
+    splits: new Map(),
     operators: new Set(),
     idem: new Map(),
     seq: 0,
