@@ -9,11 +9,11 @@ Frozen reference: `/Users/Dileepa/dark-factory-v3/stage-1/` with its `PLAN.md`, 
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W7 | builder | Holds API: `GET /me` money fields, authorizations, capture, void, list, expiry, funds judged on `available` | BLOCKED (PASS @ 16adbc0, suite cb62939; critic BLOCKED: X15, a reset keeping a clock that ran ahead, untested; test owed by the verifier, no product change) | 16adbc0 |
+| W7 | builder | Holds API: `GET /me` money fields, authorizations, capture, void, list, expiry, funds judged on `available` | ACCEPTED (PASS @ 16adbc0, suite cb62939, carried to 5e17085; APPROVED @ 16adbc0, REVIEW.md acc2081, after the X15 tests) | 16adbc0 |
 | W8 | builder | Export schema 2 and import of stage-1 exports (upgrade) | VERIFIED (PASS @ 54acbcd, suite 62c4a4e: 1488 passed --upto 8; npm test 137/137; supplied stage 1 147/147); awaiting critic | 54acbcd |
-| W9 | builder | UI foundation: HTML routes, shell, visual system, signup, login, logout, navigation | HANDED_OFF @ 5f9781a (whole UI; W9-W11 verified and reviewed together) | 5f9781a |
-| W10 | builder | Wallet screen `/`: wallet numbers, pay and request forms, activity feed, refresh, uncertain outcomes, upgrade | HANDED_OFF @ 5f9781a | 5f9781a |
-| W11 | builder | Requests, split and holds screens | HANDED_OFF @ 5f9781a | 5f9781a |
+| W9 | builder | UI foundation: HTML routes, shell, visual system, signup, login, logout, navigation | VERIFIED (PASS @ 5f9781a, suite 5e17085: 1983 passed --upto 11, every check; npm test 150/150; supplied host and isolated: stage 1 147/147, stage 2 35/35, claimed stage 2); awaiting critic | 5f9781a |
+| W10 | builder | Wallet screen `/`: wallet numbers, pay and request forms, activity feed, refresh, uncertain outcomes, upgrade | VERIFIED (PASS @ 5f9781a, suite 5e17085: 1983 passed --upto 11, every check; npm test 150/150; supplied host and isolated: stage 1 147/147, stage 2 35/35, claimed stage 2); awaiting critic | 5f9781a |
+| W11 | builder | Requests, split and holds screens | VERIFIED (PASS @ 5f9781a, suite 5e17085: 1983 passed --upto 11, every check; npm test 150/150; supplied host and isolated: stage 1 147/147, stage 2 35/35, claimed stage 2); awaiting critic | 5f9781a |
 | W13 | builder | UI presentation fixes from the planner's screenshot review (request amount colours, expiry text at 375 px, capture wording) | PLANNED (build in a new commit; hand off after the W9-W11 verdicts) | — |
 | W12 | verifier | Stage-2 acceptance suite: stage-1 regression, holds API, upgrade, browser | BUILDING (suite ca09237, 1980 checks, plan 45fe2dc criteria included; not yet draft-run on a product) | ca09237 |
 
@@ -553,8 +553,10 @@ Each normative line of stage-2.md, condensed (S1-S130), with the acceptance test
 | Liveness resend to critic: stage-2 handoff part 1 (plan review, then W7 review) | critic | 09:36Z | critic 09:36Z: all parts and revisions received; plan review, then W7 | acknowledged |
 | Critic plan review @ 736690c (8 defects, 3 gaps, 3 recommendations; REVIEW.md df4b697) -> plan revision: D43 (4 s, abort), D46 (authorize form on `/` too), D50, D64, D65, I34, I46, I48, 3.5-3.14, W7.3, W7.6, W7.9, W8.2, W9.2, W9.6, W10.3-W10.5, W11.1-W11.4 | builder, verifier, critic | 09:41Z | — | sent |
 | HANDOFF W7 @ 16adbc0 (builder) | verifier, critic | 09:54Z | verifier PASS 10:07Z (suite cb62939) | critic BLOCKED 10:24Z (X15 test gap; REVIEW.md 7e9b3df) |
-| W7 block X15: tests owed (verifier acceptance tests; builder tests 5f9781a already kill X15 and the deadline mutants) | verifier, critic | 10:28Z | builder 5f9781a | suite 5e17085 10:34Z: X15 killed on 16adbc0 and 54acbcd, H04/H04b/C06d killed on 54acbcd, PASS carried over (tests-only delta); awaiting critic rerun |
+| W7 block X15: tests owed (verifier acceptance tests; builder tests 5f9781a already kill X15 and the deadline mutants) | verifier, critic | 10:28Z | builder 5f9781a | suite 5e17085 10:34Z: X15 killed on 16adbc0 and 54acbcd, H04/H04b/C06d killed on 54acbcd, PASS carried over (tests-only delta); awaiting critic rerun; critic APPROVED W7 10:52Z (REVIEW.md acc2081) |
 | HANDOFF W8 @ 54acbcd (builder) | verifier, critic | 10:13Z | verifier PASS 10:28Z (suite 62c4a4e) | awaiting critic |
+| HANDOFF W9 @ 5f9781a (whole UI; W10, W11 at the same commit, planner direction: one verdict) | verifier, critic | after 10:26Z (commit time) | verifier PASS 10:52Z (suite 5e17085, host and isolated claimed stage 2) | awaiting critic |
+| W13 UI presentation fixes (planner screenshot review), plan 4d1df81 | builder, verifier, critic | 10:42Z | builder commit 92d940d 10:45Z | to be handed off after the W9-W11 verdicts |
 
 ## 8. Stage close
 
