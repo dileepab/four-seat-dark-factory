@@ -9,7 +9,7 @@ Frozen references: `stage-1/` (accepted at 4baf8d9) and `stage-2/` (accepted at 
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | BUILDING (builder commit e98c86a; gate running) | e98c86a |
+| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | HANDED_OFF @ e98c86a (builder gate: npm test green, the copied stage-2 suite 1971 passed and 55 failed only on the authorization key set that now includes `closed_at`, supplied stages 1 and 2 pass, stage-3 sample 3 of 6 with the statement and correction checks waiting for W15 and W16); verifier verdict after the first W18 commit | e98c86a |
 | W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | PLANNED | — |
 | W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | PLANNED | — |
 | W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | PLANNED | — |
@@ -351,6 +351,7 @@ Each normative line of stage-3.md, condensed (T1-T70), with the acceptance tests
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
 | Stage-3 handoff, parts 1-18 (plan 4497d6f) | builder, verifier, critic | 13:22Z | builder (W14 started; commit e98c86a 13:38Z), critic (plan review started), verifier by 13:43Z after a liveness check at 13:42Z (W14-W16 tests drafted) | acknowledged |
+| HANDOFF W14 @ e98c86a (builder) | verifier, critic | by 13:51Z | — | awaiting the first W18 suite commit, then the verdict |
 
 ## 8. Stage close
 
