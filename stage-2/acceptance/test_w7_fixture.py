@@ -3,12 +3,14 @@ PLAN 3.11, D48, D62). I25, I30, I33."""
 from __future__ import annotations
 
 import copy
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from support import (AUTHZ_KEYS, check_authorization, check_payment, expect, expect_error, fixture,
+from support import (AUTHZ_KEYS, Snapshot, check_authorization, check_payment, expect, expect_error, fixture,
                      seeded_auth, standard_users, ts)
+from test_w5_export_import import _shift_years
 
 pytestmark = pytest.mark.item(7)
 
@@ -227,6 +229,30 @@ def test_reset_replaces_authorizations_and_the_ttl(world):
     a = expect(world.svc.client("ada").authorize("bob", 1), 201)
     assert ts(a["expires_at"]) - ts(a["created_at"]) == timedelta(seconds=600), "the TTL returns to 600"
     assert world.svc.client("ada").money() == (10_000, 9_999, 1)
+
+
+def test_reset_after_an_import_whose_clock_ran_ahead_starts_the_clock_at_the_reset(svc):
+    """W7.8, D49, I25, stage-1 §10 "Reset clears all state, including imported state" (critic X15):
+    after an import dated 2099 the reset's own time is the clock, so a hold seeded two hours ahead is open."""
+    svc.must_reset(fixture(standard_users()))
+    expect(svc.client("ada").pay("bob", 1), 201)
+    snap = svc.export()
+    body = copy.deepcopy(snap.body)
+    assert _shift_years(body["state"], "2099"), "no timestamp-shaped string in the export; this probe cannot run"
+    expect(svc.import_(Snapshot(body, json.dumps(body), snap.total, copy.deepcopy(snap.accounts))), 204)
+    ahead = expect(svc.client("ada").pay("bob", 1), 201)
+    assert ts(ahead["created_at"]).year == 2099, "precondition: the imported clock runs ahead of the wall clock"
+    svc.must_reset(fixture(standard_users(), authorizations=[seeded_auth("a_live", "ada", "bob", 400)]))
+    ada = svc.client("ada")
+    assert ada.money() == (10_000, 9_600, 400), "the seeded hold expiring in two hours is held"
+    a = check_authorization(ada.auth("a_live"), status="open", remaining_amount=400, captured_amount=0)
+    assert ts(a["created_at"]).year < 2099, f"the seeded hold is dated {a['created_at']}, by the imported clock"
+    assert [x["authorization_id"] for x in ada.auths(status="open")] == ["a_live"]
+    p = expect(ada.pay("bob", 1), 201)
+    assert ts(p["created_at"]).year < 2099, f"a new payment is dated {p['created_at']}, by the imported clock"
+    assert ts(a["created_at"]) <= ts(p["created_at"])
+    expect(svc.client("bob").capture("a_live", {"amount": 400}), 201)
+    assert ada.money() == (9_599, 9_599, 0)
 
 
 def test_seeded_hold_is_capturable_and_voidable(svc):

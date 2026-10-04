@@ -13,8 +13,8 @@ import time
 
 import pytest
 
-from support import (Snapshot, check_authorization, expect, expect_error, fixture, new_key, seeded_auth,
-                     standard_users, ts, user)
+from support import (RFC3339, Snapshot, check_authorization, expect, expect_error, fixture, new_key,
+                     seeded_auth, standard_users, ts, user)
 
 pytestmark = pytest.mark.item(8)
 
@@ -160,6 +160,47 @@ def test_open_hold_expires_by_the_clock_after_import(svc, svc_b):
     check_authorization(ada_b.auth(a["authorization_id"]), status="expired", remaining_amount=0)
     assert ada_b.money() == (10_000, 10_000, 0)
     expect_error(svc_b.client("bob").capture(a["authorization_id"]), 409, "authorization_expired")
+
+
+def _set_every_timestamp(node, value: str) -> int:
+    """Set every RFC 3339 timestamp string in the state, the last issued timestamp included, to one instant."""
+    n = 0
+    slots = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
+    for k, v in list(slots):
+        if isinstance(v, str) and RFC3339.match(v):
+            node[k] = value
+            n += 1
+        else:
+            n += _set_every_timestamp(v, value)
+    return n
+
+
+def test_an_imported_clock_at_exactly_a_deadline_expires_the_hold(svc):
+    """W8.2, D49, I34 (critic H02, H04): the state's last issued timestamp equals an open hold's expires_at,
+    both ahead of the wall clock. The import's now is then the deadline itself, and at the deadline the
+    hold is expired ("`expires_at` is at or before now")."""
+    deadline = "2099-06-15T10:20:30.000+00:00"
+    svc.must_reset(fixture(standard_users(), authorizations=[
+        seeded_auth("a_edge", "ada", "bob", 400, expires_at=deadline)]))
+    svc.client("ada"), svc.client("bob")        # log in now, so nothing after the import issues a timestamp
+    assert svc.client("ada").money() == (10_000, 9_600, 400)
+    snap = svc.export()
+    body = copy.deepcopy(snap.body)
+    # The hold's created_at and expires_at, and the state's last issued timestamp.
+    assert _set_every_timestamp(body["state"], deadline) >= 3, "too few timestamps in the export; this probe cannot run"
+    expect(svc.import_(Snapshot(body, json.dumps(body), snap.total, copy.deepcopy(snap.accounts))), 204)
+    ada, bob = svc.client("ada"), svc.client("bob")
+    got = check_authorization(ada.auth("a_edge"), status="expired", remaining_amount=0, captured_amount=0)
+    assert got["expires_at"] == deadline
+    assert ada.money() == (10_000, 10_000, 0), "a hold at exactly its deadline holds nothing"
+    assert [x["authorization_id"] for x in ada.auths(status="expired")] == ["a_edge"]
+    assert ada.auths(status="open") == []
+    expect_error(bob.capture("a_edge"), 409, "authorization_expired")
+    expect_error(bob.capture("a_edge", {"amount": 1, "final": False}), 409, "authorization_expired")
+    expect_error(ada.void("a_edge"), 409, "authorization_not_open")
+    p = expect(ada.pay("bob", 10_000), 201)       # the 400 the hold once reserved is spendable
+    assert ts(p["created_at"]) >= ts(deadline)
+    check_authorization(ada.auth("a_edge"), status="expired", remaining_amount=0)
 
 
 def test_spending_released_money_after_a_deadline_still_exports_and_imports(svc, svc_b):

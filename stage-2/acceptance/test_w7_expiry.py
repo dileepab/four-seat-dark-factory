@@ -47,6 +47,31 @@ def test_open_hold_expires_with_no_request_at_the_deadline(short):
     assert ada.money() == (9_000, 9_000, 0)
 
 
+def test_the_deadline_releases_the_hold_at_once_on_the_service_clock(svc):
+    """W7.6, I34, D49 (critic H02b, H04b): read about 50 ms after the deadline, as the service's own clock
+    counts it, with no request at the deadline. The hold is already expired and holds nothing.
+    The read always comes after the deadline, so a correct service passes however slow the host is."""
+    svc.must_reset(fixture(standard_users(), ttl=1))
+    ada, bob = svc.client("ada"), svc.client("bob")
+    ada.money(), bob.auths()                                # warm both connections
+    before = time.time()
+    a = expect(ada.authorize("bob", 1_000), 201)
+    after = time.time()
+    # The service clock minus the host clock, from the created_at just issued (the wall clock after a reset),
+    # with its error bound: half the round trip, plus the millisecond the timestamp drops.
+    offset = ts(a["created_at"]).timestamp() - (before + after) / 2
+    err = (after - before) / 2 + 0.001
+    deadline = ts(a["expires_at"]).timestamp()
+    time.sleep(max(0.0, deadline + err + 0.05 - offset - time.time()))
+    money = ada.money()
+    got = bob.auth(a["authorization_id"])
+    capture = bob.capture(a["authorization_id"])
+    window = time.time() + offset - deadline                # upper bound of the reads' service time after the deadline
+    assert money == (10_000, 10_000, 0), f"held {money[2]} at most {window:.3f} s after the deadline"
+    check_authorization(got, status="expired", remaining_amount=0)
+    expect_error(capture, 409, "authorization_expired")
+
+
 def test_released_money_is_spendable_after_expiry(short):
     cy = short.client("cy")
     a = expect(cy.authorize("ada", 500), 201)
