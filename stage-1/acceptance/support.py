@@ -552,3 +552,44 @@ def wait_healthy(base_url: str, deadline_s: float = 60.0) -> float:
             pass
         time.sleep(0.25)
     raise AssertionError(f"{base_url}/health not 200 within {deadline_s}s")
+
+
+# ---------------------------------------------------------------- raw HTTP
+
+def raw_exchange(sock, request: bytes, timeout: float = REQUEST_TIMEOUT) -> tuple[int, dict, bytes]:
+    """Send one HTTP/1.1 request on an open socket and read one complete response."""
+    sock.settimeout(timeout)
+    sock.sendall(request)
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise AssertionError(f"connection closed before a response: {data[:200]!r}")
+        data += chunk
+    head, _, rest = data.partition(b"\r\n\r\n")
+    lines = head.decode("latin-1").split("\r\n")
+    status = int(lines[0].split(" ")[1])
+    headers = {}
+    for line in lines[1:]:
+        k, _, v = line.partition(":")
+        headers[k.strip().lower()] = v.strip()
+    length = int(headers.get("content-length", "0"))
+    while len(rest) < length:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        rest += chunk
+    return status, headers, rest[:length]
+
+
+def raw_request(base_url: str, method: str, path: str, *, token: str | None = None,
+                body: bytes = b"", extra: str = "") -> tuple[int, dict, bytes]:
+    """One request with the path sent exactly as given (no client-side re-encoding)."""
+    import socket
+    from urllib.parse import urlsplit
+    u = urlsplit(base_url)
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    req = (f"{method} {path} HTTP/1.1\r\nHost: {u.hostname}\r\n{auth}{extra}"
+           f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n").encode("latin-1") + body
+    with socket.create_connection((u.hostname, u.port or 80), timeout=REQUEST_TIMEOUT) as s:
+        return raw_exchange(s, req)

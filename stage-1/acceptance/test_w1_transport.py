@@ -10,7 +10,10 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from support import Api, expect, expect_error, new_key, no_5xx
+import json
+import time
+
+from support import Api, expect, expect_error, new_key, no_5xx, raw_exchange, raw_request
 
 pytestmark = pytest.mark.item(1)
 
@@ -61,6 +64,44 @@ def test_unknown_route_or_method_is_404_with_envelope(world, method, path):
 def test_unknown_route_is_404_even_without_a_token(svc):
     """PLAN 3.5 step 1: the route is resolved before authentication."""
     expect_error(svc.api().get("/definitely/not/here"), 404, "not_found")
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/me%E0%A4%A"),
+    ("GET", "/%ZZ"),
+    ("GET", "/%"),
+    ("POST", "/auth/%E0%A4%A"),
+    pytest.param("POST", "/requests/%E0%A4%A/pay", marks=W3),
+    pytest.param("POST", "/requests/%ZZ/decline", marks=W3),
+    pytest.param("POST", "/requests/%E0%A4%A/cancel", marks=W3),
+])
+def test_path_that_does_not_percent_decode_is_404(world, method, path):
+    """PLAN 3.2 (D33): never a 5xx."""
+    status, headers, body = raw_request(world.svc.base_url, method, path, token=world.ada.token,
+                                        body=b"{}", extra=f"Idempotency-Key: {new_key()}\r\n")
+    assert status == 404, (status, body[:200])
+    assert json.loads(body)["error"]["code"] == "not_found"
+
+
+def test_idle_keep_alive_connection_is_reused_after_six_seconds(svc):
+    """PLAN 3.13 (D35): a connection idle for 6 s still gets its next response."""
+    import socket
+    from urllib.parse import urlsplit
+    u = urlsplit(svc.base_url)
+    req = f"GET /health HTTP/1.1\r\nHost: {u.hostname}\r\nConnection: keep-alive\r\n\r\n".encode()
+    with socket.create_connection((u.hostname, u.port), timeout=10) as s:
+        assert raw_exchange(s, req)[0] == 200
+        time.sleep(6)
+        status, _, body = raw_exchange(s, req)
+    assert status == 200 and json.loads(body) == {"status": "ok"}
+
+
+def test_pooled_client_survives_a_six_second_idle(svc):
+    with httpx.Client(base_url=svc.base_url, timeout=5,
+                      limits=httpx.Limits(keepalive_expiry=60)) as c:
+        assert c.get("/health").status_code == 200
+        time.sleep(6)
+        assert c.get("/health").status_code == 200
 
 
 def test_unknown_query_parameters_are_ignored(world):

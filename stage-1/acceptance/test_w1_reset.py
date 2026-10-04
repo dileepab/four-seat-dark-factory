@@ -253,6 +253,19 @@ def test_seeded_payments_follow_the_feed_rule_and_representation(svc):
 
 
 @pytest.mark.item(2)
+def test_fixture_settlement_id_is_shown_unchanged(svc):
+    """PLAN 3.11 (D34): a fixture payment's settlement_id is shown; one without shows null."""
+    svc.must_reset(fixture(standard_users(), payments=[
+        {"id": "p_m", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 5, "settlement_id": "st_old"},
+        {"id": "p_n", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 6, "settlement_id": None},
+        {"id": "p_o", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 7}]))
+    for h in ("ada", "bob", "cy"):
+        feed = {p["payment_id"]: p for p in svc.client(h).feed()}
+        assert feed["p_m"]["settlement_id"] == "st_old"
+        assert feed["p_n"]["settlement_id"] is None and feed["p_o"]["settlement_id"] is None
+
+
+@pytest.mark.item(2)
 def test_fixture_order_is_creation_order(svc):
     """D15: seeded records share the reset time; fixture order is creation order (newest first)."""
     pays = [{"id": f"p_{i}", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": i + 1}
