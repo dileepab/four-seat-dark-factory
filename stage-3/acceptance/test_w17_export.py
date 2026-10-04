@@ -388,3 +388,53 @@ def test_the_clock_base_of_an_import_is_an_exact_instant(svc, svc_b):
     p = expect(svc_b.client("ada").pay("bob", 1), 201)
     assert instant(p["created_at"]) > instant(ahead), \
         f"D86: the clock base is the latest instant compared exactly: {p['created_at']} is not after {ahead}"
+
+
+# ---------------------------------------------------------------- W18.7 (b): D84 across a round trip
+
+PART_MARKS = ["2026-02-28T23:59:59.999999Z", "2026-03-01T00:00:00Z", "2026-03-01T23:59:59.999999Z",
+              "2026-03-02T00:00:00Z"]
+
+
+def partly_captured_state(svc) -> list[str]:
+    """A seeded partly captured hold, display-only links naming existing records, and two API captures."""
+    svc.must_reset(fixture(standard_users()))
+    far = shifted(svc.client("ada").service_now("bob"), seconds=7200, digits=3)
+    svc.must_reset(fixture(standard_users(), payments=[
+        seeded("p_link", "ada", "bob", 50, "2026-03-02T00:00:00Z", authorization_id="a_part")],
+        authorizations=[{"id": "a_part", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 1_000,
+                         "expires_at": far, "created_at": "2026-03-01T00:00:00Z", "captured_amount": 400,
+                         "payment_id": "p_link", "payment_ids": ["p_link"]}]))
+    bob = svc.client("bob")
+    c1 = expect(bob.capture("a_part", {"amount": 100, "final": False}), 201)["created_at"]
+    c2 = expect(bob.capture("a_part", {"amount": 50, "final": False}), 201)["created_at"]
+    return PART_MARKS + [shifted(c1, -1), c1, shifted(c2, -1), c2, shifted(far, -1), far]
+
+
+def observe_partly(svc, marks) -> dict:
+    out = {}
+    for h in ("ada", "bob"):
+        c = svc.client(h)
+        out[h] = {"me": c.me(), "auths": c.auths(), "views": [c.money_at(t) for t in marks],
+                  "known": [c.money_at(None, t) for t in marks], "present": c.money_at(None, FAR_FUTURE)}
+    return out
+
+
+def test_a_partly_captured_hold_round_trips_with_its_history(svc, svc_b):
+    """D84, I67: the same history views after an export and import, in the same container and a second one."""
+    marks = partly_captured_state(svc)
+    before = observe_partly(svc, marks)
+    assert before["ada"]["views"][:4] == [(10_050, 10_050, 0), (10_050, 9_450, 600), (10_050, 9_450, 600),
+                                          (10_000, 9_400, 600)], "D84 before the export"
+    assert before["ada"]["views"][5] == (9_900, 9_400, 500) and before["ada"]["views"][7] == (9_850, 9_400, 450)
+    for h in ("ada", "bob"):
+        m = before[h]["me"]
+        assert before[h]["present"] == (m["total"], m["available"], m["held"]), f"I67 for {h}"
+    snap = svc.export()
+    expect(svc.import_(snap), 204)
+    assert observe_partly(svc, marks) == before
+    svc_b.must_reset(fixture(standard_users()))
+    expect(svc_b.import_(snap), 204)
+    assert observe_partly(svc_b, marks) == before
+    expect(svc_b.client("bob").capture("a_part", {"amount": 50, "final": False}), 201)
+    assert svc_b.client("ada").money() == (9_800, 9_400, 400)

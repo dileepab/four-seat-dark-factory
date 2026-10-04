@@ -39,8 +39,8 @@ It needs Python 3.11+ with `pytest`, `httpx` and Playwright with Chromium. It us
 | `test_w15_statements.py` | W15.1-W15.7: shape, order and ties, windows, only the caller's payments, pages, `known_at`, snapshots, holds are not entries |
 | `test_w16_corrections.py` | W16.1-W16.10: the new revision, idempotency beyond the shared scenarios, every field rule, precedence, permissions, linked payments, stale revisions, money, funds and historical overdraft, history reads, the revisions read |
 | `test_w16_concurrency.py` | W16.6, W18.4: 50 corrections with one expected revision, retries, corrections racing payments and captures, snapshot pages read while corrections commit |
-| `test_w17_export.py` | W17.1, W17.2, W17.4: schema 3, round trips (revisions, opening balances, views, statements, snapshot tokens, correction replays), rejected schema-3 states |
-| `test_w17_upgrade.py` | W17.3: unchanged exports of the frozen stage-1 and stage-2 builds imported into stage 3 |
+| `test_w17_export.py` | W17.1, W17.2, W17.4: schema 3, round trips (revisions, opening balances, views, statements, snapshot tokens, correction replays), every instant form and the clock base (D85, D86), rejected schema-3 states; W18.7 (b): a partly captured hold across a round trip |
+| `test_w17_upgrade.py` | W17.3: unchanged exports of the frozen stage-1 and stage-2 builds imported into stage 3; W18.7 (a): a stage-2 seeded partly captured hold with display-only links and an API capture |
 
 Each test carries `item(n)`, the highest work item it needs. `--upto n` runs the checks up to Wn.
 
@@ -50,7 +50,7 @@ After every test the `svc` fixture logs in as every account the test knows and a
 - I1: the `total`s sum to the seeded total.
 - I2: no negative `total`, `available` or `held`, and `held <= total`.
 - I30: `balance == total`, `available == total - held`, and `held` equals the open outgoing remainders that `GET /authorizations` lists.
-- From `--upto 14` (`Service.assert_history_invariants`): I1 in historical views (`as_of` at the epoch and far in the future, `known_at` at the epoch, and at up to 12 instants of the accounts' history), and, when the seeded history is consistent (`history_is_consistent`), I2 and I60 at those instants: `total` and `available` never negative, `balance == total`, `available == total - held`. The history instants come from the feed before W15 and from the statement (effective times) from W15 on.
+- From `--upto 14` (`Service.assert_history_invariants`): I67, `GET /me` equals the view with `known_at` far in the future for every account (compared only when two `GET /me` reads around it agree, so an expiry between the reads is not a failure); I1 in historical views (`as_of` at the epoch and far in the future, `known_at` at the epoch, and at up to 12 instants of the accounts' history), and, when the seeded history is consistent (`history_is_consistent`), I2 and I60 at those instants: `total` and `available` never negative, `balance == total`, `available == total - held`. The history instants come from the feed before W15 and from the statement (effective times) from W15 on.
 
 `Service.burst` releases up to 50 requests together. While they run, it reads every known `/me` in a loop (I2 and I30 during the burst), and it asserts I1 when they finish.
 

@@ -11,9 +11,9 @@ import copy
 import httpx
 import pytest
 
-from support import (EPOCH, RESET_TIMEOUT, STAGE2_AUTHZ_KEYS, check_authorization, expect, expect_error, instant,
-                     new_key, read_statement, shifted)
-from test_w8_export_import import HANDLES as HANDLES2, SENTINEL_CAPTURE, build_holds
+from support import (EPOCH, FAR_FUTURE, RESET_TIMEOUT, STAGE2_AUTHZ_KEYS, check_authorization, expect, expect_error,
+                     fixture, instant, new_key, read_statement, shifted, standard_users)
+from test_w8_export_import import HANDLES as HANDLES2, SENTINEL_AMOUNT, SENTINEL_CAPTURE, build_holds
 from test_w8_upgrade import upgrade
 
 pytestmark = pytest.mark.item(17)
@@ -142,14 +142,27 @@ def test_stage_2_holds_keep_their_history(prev2, svc):
             f"I61: a seeded closed hold closes at the stage-2 reset's timestamp: {by_id[aid]}"
     assert by_id["a_seed_past"]["closed_at"] == by_id["a_seed_past"]["expires_at"]
 
-    # Ada's open hold of 1000 counts from its creation; zed's partial hold drops by the capture at its time.
+    # The frozen stage-2 build issues never-decreasing timestamps, so a hold and its capture or void can
+    # share a millisecond; "just before" is checked only when the creation is earlier.
+    # Ada's open hold of 1000 counts from its creation (checked when no other hold event of hers shares it).
     c = a["open"]["created_at"]
-    assert ada.money_at(shifted(c, -1))[2] + 1_000 == ada.money_at(c)[2]
+    others = {instant(t) for x in ada.auths(direction="outgoing") if x["authorization_id"] != a["open"]["authorization_id"]
+              for t in (x["created_at"], x["closed_at"]) if t}
+    if instant(c) not in others:
+        assert ada.money_at(shifted(c, -1))[2] + 1_000 == ada.money_at(c)[2]
+    # Zed's partial hold: 500 from the seeded open hold, plus the partial hold less the capture at its time.
     pc = caps[a["partial"]["authorization_id"]]["created_at"]
-    before_cap, at_cap = zed.money_at(shifted(pc, -1)), zed.money_at(pc)
-    assert before_cap[2] - at_cap[2] == SENTINEL_CAPTURE and before_cap[0] - at_cap[0] == SENTINEL_CAPTURE
+    at_cap = zed.money_at(pc)
+    assert at_cap[2] == 500 + SENTINEL_AMOUNT - SENTINEL_CAPTURE, f"zed at the capture: {at_cap}"
+    if instant(a["partial"]["created_at"]) < instant(pc):
+        before_cap = zed.money_at(shifted(pc, -1))
+        assert before_cap[2] == 500 + SENTINEL_AMOUNT and before_cap[0] - at_cap[0] == SENTINEL_CAPTURE, before_cap
+    # Ada's voided hold of 60 holds nothing from the void's closed_at on.
     vx = v["closed_at"]
-    assert ada.money_at(shifted(vx, -1))[2] - ada.money_at(vx)[2] == 60, "the void releases at its time"
+    held_after = ada.money_at(vx)[2]
+    assert held_after == 1_000, "at the void only ada's open hold of 1000 is held"
+    if instant(a["voided"]["created_at"]) < instant(vx):
+        assert ada.money_at(shifted(vx, -1))[2] - held_after == 60, "the void releases at its time"
 
 
 def test_stage_2_replays_return_their_stored_bodies(prev2, svc):
@@ -182,3 +195,37 @@ def test_stage_2_tokens_logins_requests_and_keys_work(prev2, svc):
     expect(svc.client("ada").pay_request(rich["pending"]), 201)
     expect(svc.client("bob").capture(rich["auths"]["open"]["authorization_id"], {"amount": 5}, key=rich["failed_key"]),
            201)
+
+
+def test_stage_2_partly_captured_hold_and_display_only_links(prev2, svc):
+    """W18.7 (a), D84, I67 on the stage-2 import path: a seeded open hold with a captured_amount, a seeded
+    payment naming it, its payment_ids naming that payment, and an API nonfinal capture on stage 2."""
+    prev2.must_reset(fixture(standard_users()))
+    far = shifted(prev2.client("ada").service_now("bob"), seconds=7200, digits=3)
+    prev2.must_reset(fixture(standard_users(), payments=[
+        {"id": "p_link", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 50, "authorization_id": "a_part"}],
+        authorizations=[{"id": "a_part", "from_user_id": "u_ada", "to_user_id": "u_bob", "amount": 1_000,
+                         "expires_at": far, "created_at": "2026-03-01T00:00:00Z", "captured_amount": 400,
+                         "payment_id": "p_link", "payment_ids": ["p_link"]}]))
+    cp = expect(prev2.client("bob").capture("a_part", {"amount": 100, "final": False}), 201)
+    assert prev2.client("ada").money() == (9_900, 9_400, 500), "precondition on the stage-2 build"
+    resp = httpx.get(f"{prev2.base_url}/_test/export", timeout=RESET_TIMEOUT)
+    assert expect(resp, 200)["state"]["schema"] == 2
+    assert svc.import_raw(content=resp.content).status_code == 204
+    svc.accounts, svc.total = copy.deepcopy(prev2.accounts), prev2.total
+    svc._by_handle.clear()
+    ada, bob = svc.client("ada"), svc.client("bob")
+    a = check_authorization(ada.auth("a_part"), status="open", captured_amount=500, remaining_amount=500, closed_at=None)
+    c, x = a["created_at"], cp["created_at"]
+    assert ada.money() == (9_900, 9_400, 500)
+    assert ada.money_at(shifted(c, -1)) == (10_050, 10_050, 0)
+    if instant(c) < instant(x):
+        assert ada.money_at(c) == (10_000, 9_400, 600), \
+            "D84: amount - captured_amount is held from creation, and the display-only link reduces nothing"
+        assert ada.money_at(shifted(x, -1)) == (10_000, 9_400, 600)
+    assert ada.money_at(x) == (9_900, 9_400, 500), "the API capture reduces the hold at its time"
+    for h in ("ada", "bob", "cy", "dee"):
+        m = svc.client(h).money()
+        assert svc.client(h).money_at(None, FAR_FUTURE) == m and svc.client(h).money_at(x) == m, f"I67 for {h}"
+    expect(bob.capture("a_part", {"amount": 200, "final": False}), 201)
+    assert ada.money() == (9_700, 9_400, 300)

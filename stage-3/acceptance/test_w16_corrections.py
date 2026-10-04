@@ -458,6 +458,8 @@ def test_an_earlier_effective_at_before_the_money_arrived_is_historical_overdraf
 def test_a_later_effective_at_after_the_receiver_spent_it_is_historical_overdraft(spent):
     w = spent
     t2 = w.p2["created_at"]
+    # A write first, so the service's now is a millisecond past t2 and t2 + 1 us is not in the future (D81).
+    w.ada.service_now("bob")
     expect_error(w.ada.correct(w.p1["payment_id"], 1, 500, shifted(t2, 1)), 409, "historical_overdraft")
     later = w.ada.service_now("bob")
     expect_error(w.ada.correct(w.p1["payment_id"], 1, 500, later), 409, "historical_overdraft")
@@ -480,6 +482,8 @@ def test_a_past_hold_making_available_negative_is_historical_overdraft(world):
     a = expect(world.dee.authorize("cy", 500), 201)
     t2 = a["created_at"]
     assert world.dee.money() == (500, 0, 500)
+    # A write first, so the service's now is a millisecond past t2 and t2 + 1 us is not in the future (D81).
+    world.ada.service_now("bob")
     expect_error(world.ada.correct(p1["payment_id"], 1, 500, shifted(t2, 1)), 409, "historical_overdraft")
     expect(world.ada.correct(p1["payment_id"], 1, 500, t2), 201)
     assert world.dee.money_at(t2) == (500, 0, 500)
@@ -487,6 +491,8 @@ def test_a_past_hold_making_available_negative_is_historical_overdraft(world):
 
 def test_insufficient_funds_outranks_historical_overdraft(spent):
     w = spent
+    # A write first, so the service's now is a millisecond past t2 and t2 + 1 us is not in the future (D81).
+    w.ada.service_now("bob")
     expect_error(w.ada.correct(w.p1["payment_id"], 1, 100, shifted(w.p2["created_at"], 1)), 409, "insufficient_funds")
 
 

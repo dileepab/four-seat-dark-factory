@@ -951,10 +951,19 @@ class Service:
         return [seen[k] for k in sorted(seen)]
 
     def assert_history_invariants(self, where: str = "") -> None:
-        """Stage 3: I1 in historical views; I2 and I60 at every history instant (sampled) when the
-        seeded history is consistent (I2 amended, I58)."""
+        """Stage 3: I67 (the present view equals GET /me); I1 in historical views; I2 and I60 at every
+        history instant (sampled) when the seeded history is consistent (I2 amended, I58)."""
         if not self.history_checks or self.total is None or len(self.accounts) > MAX_TRACKED_FOR_HISTORY:
             return
+        for h in self.accounts:            # I67: the present view agrees with GET /me (W18.7 c)
+            c = self.client(h)
+            for _ in range(4):
+                first, view, second = c.me(), c.me_at(None, FAR_FUTURE), c.me()
+                money = [(m["balance"], m["total"], m["available"], m["held"]) for m in (first, view, second)]
+                if money[0] == money[2]:   # a hold expiring between the reads is not compared
+                    assert money[1] == money[0], \
+                        f"I67 violated{where} on {self.name}: {h} GET /me {money[0]} != known_at far future {money[1]}"
+                    break
         views = [(EPOCH, None), (None, EPOCH), (FAR_FUTURE, None), (FAR_FUTURE, EPOCH)]
         points = self.history_instants()
         if len(points) > HISTORY_SAMPLE:
