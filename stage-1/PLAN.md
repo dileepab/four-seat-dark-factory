@@ -12,7 +12,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | ACCEPTED (PASS + APPROVED @ 2455a8d, suite 78bab0a; REVIEW.md bac1342) | 2455a8d |
 | W4 | builder | Settlements | ACCEPTED (PASS + APPROVED @ 484349f, suite cb41642; REVIEW.md cf4aab0) | 484349f |
-| W5 | builder | Export and import | VERIFIED (PASS @ 484349f); BLOCKED by critic (E19 torn export, E04 time after import: tests owed; depth limit: D38) | 484349f |
+| W5 | builder | Export and import | VERIFIED (PASS @ 484349f, suite fc36063 with E19/E04/D38/E27 tests); awaiting critic re-review | 484349f |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
