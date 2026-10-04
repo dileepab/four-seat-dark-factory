@@ -54,7 +54,7 @@ Each one is a check a test can perform. "Every read" includes reads taken during
 - **I6 Request scoping.** `GET /requests` under any filter returns only requests where the caller is the requester or the payer.
 - **I7 One visibility.** Every representation of a payment (create response, replay, every feed, settlement response) carries the same `visibility`; a `private` payment is visible to both of its parties.
 - **I8 Atomic payment.** Debit and credit happen together. A failed payment changes no balance, adds no feed item and claims no key. Money moves only between existing wallets.
-- **I9 Exact range.** Amounts and balances are exact integers; every operation's `amount` is 1 to 1000000000; no balance exceeds 2^53 (an operation that would is refused, D19).
+- **I9 Exact range.** Amounts and balances are exact integers. Every amount a client submits (`POST /payments`, `POST /requests`, `POST /splits`, each settlement transfer) is an integral number from 1 to 1000000000. Only derived amounts may be 0: split shares, the requests a split creates, the payments that pay them, and fixture or import records. No balance exceeds 2^53 (an operation that would is refused, D19).
 - **I10 Error envelope.** Every 4xx and 5xx body is `{"error": {"code": <non-empty string>, "message": <string>}}` with the specified status and code.
 - **I11 No 5xx.** No input (malformed, oversized, wrong types, Unicode edge cases) and no load up to 50 requests in flight produces a 5xx, a dropped connection, or a response slower than 5 s (10 s for reset).
 - **I12 Password storage.** No plaintext password appears in service state or in `GET /_test/export`; hashing is scrypt, bcrypt or Argon2 with a per-account salt.
@@ -80,7 +80,7 @@ Each one is a check a test can perform. "Every read" includes reads taken during
 
 ### 3.1 Runtime
 
-- `stage-1/Dockerfile`, build context `stage-1/`. The Dockerfile downloads nothing: it copies the source onto a pinned `node:24` slim base image (D1, D2) and runs as a non-root user.
+- `stage-1/Dockerfile`, build context `stage-1/`. The Dockerfile downloads nothing: it copies the source onto a pinned `node:24` base image (W1 uses `node:24.14.0-alpine3.22`) (D1, D2) and runs as a non-root user.
 - Listen on `0.0.0.0:$PORT`, default 8080. `GET /health` returns 200 `{"status": "ok"}` as soon as the server listens (target under 5 s from container start).
 - State is in memory; a restart starts empty. Before any reset there are no users, currency `EUR`, `minor_units` 2 (D29).
 
@@ -92,7 +92,7 @@ Each one is a check a test can perform. "Every read" includes reads taken during
 - Header blocks up to 1 MiB are accepted. When the HTTP layer itself rejects a request, the answer still carries the envelope: 422 `validation_failed` for oversized headers, 400 `malformed_request` otherwise (D28).
 - Unknown body fields and unknown query parameters are ignored. A repeated query parameter uses its first occurrence (D25).
 - "Characters" means Unicode code points everywhere: note, password and display name lengths, key length, handle derivation and truncation (D11).
-- An unknown path, or a known path with a method it does not serve, is 404 `not_found` (D3).
+- An unknown path, or a known path with a method it does not serve, is 404 `not_found` (D3). A path that does not percent-decode (for example `/requests/%E0%A4%A/pay`) is also 404 `not_found`, never a 5xx (D33).
 - An unexpected internal error answers 500 with code `internal_error`; this must never happen (I11).
 
 ### 3.3 Error codes (complete for stage 1)
@@ -218,7 +218,7 @@ Password hashing (D22): scrypt with a 16-byte random salt per account and the pa
 
 - `currency`: string matching `^[A-Z]{3}$`. `minor_units`: integer 0, 2 or 3.
 - `users`: array of at most 1000 objects, each with `id` (string, 1 to 64 characters), `email` (signup email rule), `password` (non-empty string), `display_name` (string), `handle` (`^[a-z0-9_]{1,20}$`), `balance` (integer 0 to 2^53). Ids, emails (case-insensitive) and handles are unique.
-- `payments`: optional array (default `[]`) of objects with `id` (string, 1 to 64, unique), `from_user_id` and `to_user_id` (existing users, different), `amount` (integer 0 to 1000000000), `note` (optional string, default `""`), `visibility` (optional, `public` or `private`, default `public`), `request_id` (optional string or null).
+- `payments`: optional array (default `[]`) of objects with `id` (string, 1 to 64, unique), `from_user_id` and `to_user_id` (existing users, different), `amount` (integer 0 to 1000000000), `note` (optional string, default `""`), `visibility` (optional, `public` or `private`, default `public`), `request_id` (optional string or null), `settlement_id` (optional string or null, shown unchanged in every representation of that payment, D34).
 - `requests`: optional array (default `[]`) of objects with `id` (string, 1 to 64, unique), `requester_id` and `payer_id` (existing users, different), `amount` (integer 0 to 1000000000), `note` (optional string, default `""`), `status` (optional, one of the four, default `pending`), `payment_id` (optional string or null).
 - `settlement_operator_ids`: optional array (default `[]`) of strings, each an existing user id.
 - Unknown fields are ignored. Balances are taken as given; seeded payments are not replayed.
@@ -240,6 +240,7 @@ Password hashing (D22): scrypt with a 16-byte random salt per account and the pa
 - One process with in-memory state. Each operation's read-check-write runs synchronously with no `await` between its first read and its last write, so the event loop is the single serialization point. Only password hashing is asynchronous, and the code after it re-validates against the current state (a generation counter changes on every reset and import).
 - Reset and import build the new state aside, then swap it in one synchronous step.
 - 50 requests in flight each complete within 5 s; `GET /health` stays responsive.
+- Idle keep-alive connections stay open at least 65 s (`server.keepAliveTimeout` ≥ 65 000 ms, `server.headersTimeout` above it), so a client pool that reuses a connection after 5 s idle never races a server-side close (D35).
 
 ## 4. Work items
 
@@ -251,8 +252,8 @@ Specification: §2, §3, §4 (users, handles, fixture), §5, §6, §8 `GET /me`.
 
 - W1.1 `docker build --network=none stage-1` succeeds once the base image is present; `docker run -e PORT=9123` serves on 9123 and without `PORT` on 8080; `GET /health` is 200 `{"status": "ok"}` within 60 s (expected under 5 s); the container works with `--network=none`.
 - W1.2 `RUN.md` gives exact commands to build, run, run the builder tests and run the acceptance suite, with no manual setup.
-- W1.3 Every rule of sections 3.2 and 3.3, each with the envelope; unknown route is 404.
-- W1.4 Reset per section 3.11: each failing rule gives 422 and leaves the previous state intact (old logins still work); a valid fixture gives 204 and only that fixture is visible; repeated resets work; the 1000-user fixture answers within 10 s.
+- W1.3 Every rule of sections 3.2 and 3.3, each with the envelope; unknown route is 404; a path that does not percent-decode is 404; an idle keep-alive connection reused after 6 s still gets its response.
+- W1.4 Reset per section 3.11: each failing rule gives 422 and leaves the previous state intact (old logins still work); a valid fixture gives 204 and only that fixture is visible; repeated resets work; the 1000-user fixture answers within 10 s; a fixture payment with `settlement_id` shows it in the feed, one without shows `null`.
 - W1.5 Signup and login per section 3.8: every row of the table, derived handles (`Dee.Ann+tag@example.com` → `dee_ann_tag`, 30 × `a` → 20 × `a`, upper case and non-ASCII local parts), `handle_taken` creates no account, `email_taken` is case-insensitive, seeded users log in at once, several tokens per account all work.
 - W1.6 Every non-exempt endpoint rejects a missing header, another scheme, an empty token and an unknown token with 401; exempt endpoints ignore even an invalid `Authorization` header.
 - W1.7 `GET /me` per section 3.6 for seeded and new users (new users hold 0 in the service currency).
@@ -335,7 +336,7 @@ Specification: all of stage 1. Invariants: all.
 - **D21 Fixture validation.** Validate what the service needs to operate (types, references, uniqueness, enums, integer ranges, at most 1000 users); stay lenient elsewhere (any note length, any display name, optional fields with defaults) so a valid fixture is never refused.
 - **D22 Password hashing.** scrypt, per-account salt; seeded accounts may use the lower work factor N=2^12 so a 1000-user reset stays under the 10 s reset timeout; signups use N=2^14 or stronger.
 - **D23 Import validation.** Full validation of the state before any change; `format_version` must equal the number 1.
-- **D24 Zero-amount requests.** A zero share is a legal request (§9) and paying it moves 0: the payment carries amount 0. Only `POST /payments` input has the 1-minimum.
+- **D24 Zero-amount requests.** A zero share is a legal request (§9) and paying it moves 0: the payment carries amount 0. Every client-submitted amount keeps the 1-minimum (§8 tables, §11 "ordinary payment amount rules"); only derived amounts may be 0.
 - **D25 Repeated query parameter.** The first occurrence is used.
 - **D26 Large offset.** Valid; returns an empty page.
 - **D27 Settlement shape errors.** Everything inside `transfers` that is malformed is 422, never 400: §11 says "malformed batch shape is 422".
@@ -345,6 +346,9 @@ Specification: all of stage 1. Invariants: all.
 - **D31 Payment note when paying a request.** Copied from the request, as are the amount and the parties; the visibility comes from the payer's body.
 - **D32 Login timing.** An unknown-email login may answer faster than a wrong-password one: the specification asks for 401 in both cases, not for equal timing, and a dummy hash would add CPU to every bad login.
 - **D22 measured (W1, 99d2431).** A 1000-user reset with 1000 distinct passwords at N=2^12 answers 204 in 6.1 s under `--cpus 2 --memory 2g`; kept, since only our own 1000-user envelope comes near the 10 s budget.
+- **D33 Undecodable paths.** 404 `not_found`: no resource has that name, and §5 forbids a 5xx. (Critic plan review.)
+- **D34 Fixture settlement membership.** Fixture payments accept `settlement_id`, because §11 says a reset must preserve settlement membership; without it a seeded member would read back as `null`. (Critic plan review.)
+- **D35 Keep-alive.** Server idle timeout above the client pool's 5 s, so I11's "no dropped connection" holds for reused connections. (Critic plan review.)
 
 ## 6. Specification trace
 
@@ -356,3 +360,4 @@ Filled in once W6 is committed: each normative line of stage-1.md, the test that
 |---|---|---|---|---|
 | Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic (plan review), verifier (W6), builder (W1), all by 06:40Z | acknowledged |
 | HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
+| Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) | builder, verifier, critic | 06:5xZ | — | sent |
