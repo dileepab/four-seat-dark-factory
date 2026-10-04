@@ -13,7 +13,7 @@ Frozen references: `stage-1/` (accepted at 4baf8d9) and `stage-2/` (accepted at 
 | W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | PLANNED | — |
 | W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | PLANNED | — |
 | W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | PLANNED | — |
-| W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | PLANNED | — |
+| W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | PLANNED (handed off with the plan) | — |
 
 Item numbers continue from stage 2 (W1–W13). States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
 
@@ -350,6 +350,7 @@ Each normative line of stage-3.md, condensed (T1-T70), with the acceptance tests
 
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
+| Stage-3 handoff, parts 1-18 (plan 4497d6f) | builder, verifier, critic | 13:22Z | — | sent |
 
 ## 8. Stage close
 
