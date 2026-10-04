@@ -1,0 +1,7 @@
+- [harness isolated needs absolute repo](harness-isolated-needs-absolute-repo.md) — `--mode isolated` exits 2 on a relative `--repo`; always pass absolute paths
+- [post hashes only after seeing them](verifier-post-hashes-only-after-seeing-them.md) — commit, read the hash, then message; never in the same parallel batch
+- [frozen builds repeat timestamps](frozen-builds-repeat-timestamps.md) — stage-1/2 builds can share a millisecond between writes; space events in upgrade tests
+- [pathspec commit skips untracked](pathspec-commit-skips-untracked.md) — `git commit -- <dir>` leaves out new files; git add them and check `show --stat` before naming a hash
+- [timing-dependent kills](timing-dependent-kills.md) — clock-instead-of-issued timestamp mutants die only on same-ms writes; rerun ≥6× under load, ask for a burst test
+- [issued timestamps need a burst](issued-timestamps-need-a-burst.md) — test "never share a timestamp" with ~20 concurrent writes, not sequential ones
+- [planner times from the clock](planner-times-from-the-clock.md) — read `date -u` before writing any time in PLAN.md or a message; never write the expected send time
