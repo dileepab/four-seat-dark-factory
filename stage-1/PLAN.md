@@ -11,8 +11,8 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d, R29 test in suite 78bab0a); awaiting critic re-review | 2455a8d |
-| W4 | builder | Settlements | VERIFIED (PASS @ e143cf1); BLOCKED by critic (S18: non-object entry order, D37 fix owed by builder) | e143cf1 |
-| W5 | builder | Export and import | VERIFIED (PASS @ 295378c, suite 026f116); awaiting critic | 295378c |
+| W4 | builder | Settlements | BUILDING: D37 fix committed 484349f, handoff pending; PASS @ e143cf1 withdrawn (fails the D37 tests, suite cb41642) | — |
+| W5 | builder | Export and import | PASS @ 295378c withdrawn (carries the pre-D37 settlements code); re-verify on the fix commit | — |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
