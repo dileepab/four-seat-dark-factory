@@ -322,6 +322,69 @@ describe('upgrade from a stage-1 export (W8.3)', () => {
   });
 });
 
+// The service clock (D49) across an import whose clock ran ahead of the wall clock.
+describe('the clock after an import that ran ahead (D49)', () => {
+  const AHEAD = '2099-01-01T00:00:00.000+00:00';
+
+  it('a reset starts at its own time, not the imported clock (I25, W7.8)', async () => {
+    const snapshot = await exportFrom(port);
+    assert.equal((await importInto(port, { ...snapshot, state: { ...snapshot.state, last_ts: AHEAD } })).status, 204);
+    const before = await login(port, 'ada');
+    const early = await before.post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() });
+    assert.ok(early.body.created_at >= AHEAD, 'the imported clock is in force before the reset');
+
+    await reset(port, fixture({
+      authorizations: [{ id: 'a_two_hours', from_user_id: 'u_ada', to_user_id: 'u_cy', amount: 400, expires_at: inHours(2) }],
+    }));
+    const ada = await login(port, 'ada');
+    const me = (await ada.get('/me')).body;
+    assert.deepEqual([me.total, me.held, me.available], [10_000, 400, 9_600], 'the seeded open hold counts right after the reset');
+    const [hold] = (await ada.get('/authorizations')).body.authorizations;
+    assert.deepEqual([hold.authorization_id, hold.status], ['a_two_hours', 'open']);
+    assert.ok(hold.created_at < '2099', `seeded at the reset's time: ${hold.created_at}`);
+    const paid = await ada.post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() });
+    assert.equal(paid.status, 201);
+    assert.ok(paid.body.created_at < '2099', `a new payment after the reset: ${paid.body.created_at}`);
+    assert.ok((await exportFrom(port)).state.last_ts < '2099');
+  });
+
+  it('a hold whose deadline is exactly the imported clock has expired; one a millisecond later is open', async () => {
+    await reset(port, fixture({
+      authorizations: [
+        { id: 'a_at', from_user_id: 'u_ada', to_user_id: 'u_cy', amount: 300, expires_at: inHours(2) },
+        { id: 'a_after', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 200, expires_at: inHours(2) },
+      ],
+    }));
+    const snapshot = await exportFrom(port);
+    const deadline = { a_at: '2099-01-01T00:00:00Z', a_after: '2099-01-01T00:00:00.001Z' } as Record<string, string>;
+    // a_at is raised to 9900: with a_after's 200 that exceeds ada's 10000, so the import is
+    // accepted only because a_at has expired at the import's clock.
+    const amount = { a_at: 9_900, a_after: 200 } as Record<string, number>;
+    const state = {
+      ...snapshot.state,
+      last_ts: AHEAD,
+      authorizations: snapshot.state.authorizations.map((a: any) => ({ ...a, expires_at: deadline[a.id], amount: amount[a.id] })),
+    };
+    const imported = await importInto(port, { ...snapshot, state });
+    assert.equal(imported.status, 204, imported.text);
+    const [ada, bob, cy] = await Promise.all(['ada', 'bob', 'cy'].map((h) => login(port, h)));
+
+    const me = (await ada.get('/me')).body;
+    assert.deepEqual([me.held, me.available], [200, me.total - 200], 'only the hold a millisecond past the clock holds');
+    const status = Object.fromEntries((await ada.get('/authorizations')).body.authorizations
+      .map((a: any) => [a.authorization_id, [a.status, a.expires_at]]));
+    assert.deepEqual(status, { a_at: ['expired', deadline.a_at], a_after: ['open', deadline.a_after] });
+    expectError(await cy.post('/authorizations/a_at/capture', { json: { amount: 1, final: false }, key: key() }), 409,
+      'authorization_expired');
+    assert.deepEqual((await ada.get('/me')).body, me, 'the refused capture changed nothing');
+    const captured = await bob.post('/authorizations/a_after/capture', { json: { amount: 50, final: false }, key: key() });
+    assert.equal(captured.status, 201, captured.text);
+    assert.equal(captured.body.created_at, AHEAD, 'captured at the imported clock, before its deadline');
+    const after = (await ada.get('/me')).body;
+    assert.deepEqual([after.total, after.held], [me.total - 50, 150]);
+  });
+});
+
 describe('a stage-1 fixture shape still resets (W8.3)', () => {
   it('needs neither the TTL nor authorizations', async () => {
     await reset(port, { currency: 'EUR', minor_units: 2, users: [user('ada', 1)] });
