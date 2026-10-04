@@ -7,7 +7,7 @@ import { amountValue, optionalNote, optionalVisibility } from '../fields.ts';
 import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { has, isObject, type JsonObject } from '../json.ts';
 import { recordPayment, type Transfer } from '../ledger.ts';
-import { availableOf, clock, MAX_BALANCE, newId, nextSeq, store, type State, type User } from '../state.ts';
+import { availableOf, clock, issue, MAX_BALANCE, newId, nextSeq, store, type State, type User } from '../state.ts';
 import { paymentView } from '../views.ts';
 
 const MAX_TRANSFERS = 32;
@@ -72,7 +72,7 @@ export function createSettlement(ctx: Ctx): Result {
       }
     }
 
-    const committedAt = now.ts;
+    const committedAt = issue(st, now);
     const id = newId('st', (sid) => st.settlements.has(sid));
     const payments = transfers.map((t) => recordPayment(st, { ...t, settlementId: id, createdAt: committedAt }));
     for (const [user, change] of net) user.balance += change;

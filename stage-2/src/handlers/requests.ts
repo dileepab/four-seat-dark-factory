@@ -6,7 +6,7 @@ import { optionalNote, optionalVisibility, paging, requireAmount, requireHandle 
 import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { canCredit, commitTransfer } from '../ledger.ts';
 import {
-  addRequest, availableOf, clock, newId, nextSeq, nextTs, REQUEST_STATUSES, store,
+  addRequest, availableOf, clock, issue, newId, nextSeq, nextTs, REQUEST_STATUSES, store,
   type PayRequest, type RequestStatus, type State, type User,
 } from '../state.ts';
 import { newestFirst, paymentView, requestView } from '../views.ts';
@@ -74,7 +74,7 @@ export function payRequest(ctx: Ctx): Result {
     if (!canCredit(requester, request.amount)) throw invalid('the payment would take the requester above 2^53');
     const payment = commitTransfer(st, {
       from: caller, to: requester, amount: request.amount, note: request.note, visibility,
-      requestId: request.id, settlementId: null, authorizationId: null, createdAt: now.ts,
+      requestId: request.id, settlementId: null, authorizationId: null, createdAt: issue(st, now),
     });
     request.status = 'paid';
     request.paymentId = payment.id;

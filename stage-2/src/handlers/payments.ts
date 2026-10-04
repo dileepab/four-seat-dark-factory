@@ -5,7 +5,7 @@ import { ApiError, conflict, invalid, notFound } from '../errors.ts';
 import { optionalNote, optionalVisibility, paging, requireAmount, requireHandle } from '../fields.ts';
 import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { canCredit, commitTransfer } from '../ledger.ts';
-import { availableOf, clock, store } from '../state.ts';
+import { availableOf, clock, issue, store } from '../state.ts';
 import { newestFirst, paymentView } from '../views.ts';
 
 export function createPayment(ctx: Ctx): Result {
@@ -25,7 +25,7 @@ export function createPayment(ctx: Ctx): Result {
     if (!canCredit(to, amount)) throw invalid('the payment would take the receiver above 2^53');
     const payment = commitTransfer(st, {
       from: caller, to, amount, note, visibility, requestId: null, settlementId: null, authorizationId: null,
-      createdAt: now.ts,
+      createdAt: issue(st, now),
     });
     return paymentView(st, payment);
   });

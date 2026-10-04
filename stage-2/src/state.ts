@@ -188,17 +188,23 @@ export function nextTs(st: State): string {
 }
 
 // The service clock (D49): the later of the wall clock and the last issued timestamp. Every
-// operation, reads included, takes it once at its start and judges expiry by it. Recording
-// it as issued keeps it from ever running backwards within a state, so an authorization
-// that reads expired once reads expired at every later read.
+// operation, reads included, takes it once at its start and judges expiry by it. Reading it
+// changes nothing; only a commit issues its time (`issue`), as nextTs does.
 export interface Now {
   ts: string;
   ms: number;
 }
 
 export function clock(st: State): Now {
-  const ts = nextTs(st);
+  const wall = formatTs(Date.now());
+  const ts = wall > st.lastTs ? wall : st.lastTs;
   return { ts, ms: Date.parse(ts) };
+}
+
+// Record the operation's `now` as issued (it is never earlier than lastTs) and return it.
+export function issue(st: State, now: Now): string {
+  if (now.ts > st.lastTs) st.lastTs = now.ts;
+  return now.ts;
 }
 
 export function nextSeq(st: State): number {
@@ -258,15 +264,17 @@ export function closeAuthorization(st: State, a: Authorization, status: 'capture
 }
 
 // The sum of the user's open holds at `nowMs`. An authorization past its deadline holds
-// nothing and, the clock never running backwards, never will again, so it leaves the index;
-// its stored status stays `open` (closed_at null: the deadline is its closing time).
+// nothing; once the last issued timestamp has passed the deadline it never can again (every
+// later clock reading is at least that), so it leaves the index. Its stored status stays
+// `open` (closed_at null: the deadline is its closing time).
 export function heldBy(st: State, userId: string, nowMs: number): number {
   const open = st.holds.get(userId);
   if (!open) return 0;
+  const floor = Date.parse(st.lastTs);
   let held = 0;
   for (const a of open) {
-    if (nowMs >= a.expiresMs) open.delete(a);
-    else held += a.amount - a.capturedAmount;
+    if (a.expiresMs <= floor) open.delete(a);
+    else if (a.expiresMs > nowMs) held += a.amount - a.capturedAmount;
   }
   return held;
 }

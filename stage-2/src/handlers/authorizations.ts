@@ -11,7 +11,7 @@ import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { has } from '../json.ts';
 import { canCredit, commitTransfer } from '../ledger.ts';
 import {
-  addAuthorization, AUTHORIZATION_STATUSES, availableOf, clock, closeAuthorization, formatTs, newId, nextSeq,
+  addAuthorization, AUTHORIZATION_STATUSES, availableOf, clock, closeAuthorization, formatTs, issue, newId, nextSeq,
   statusAt, store,
   type Authorization, type State,
 } from '../state.ts';
@@ -50,7 +50,7 @@ export function createAuthorization(ctx: Ctx): Result {
       expiresMs,
       paymentId: null,
       paymentIds: [],
-      createdAt: now.ts,
+      createdAt: issue(st, now),
       closedAt: null,
       seq: nextSeq(st),
     };
@@ -95,16 +95,17 @@ export function captureAuthorization(ctx: Ctx): Result {
     }
     if (!canCredit(caller, take)) throw invalid('the capture would take the receiver above 2^53');
     // The payer's total and held both fall by `take`: it was reserved, so `available` is unchanged.
+    const ts = issue(st, now);
     const payment = commitTransfer(st, {
       from: st.users.get(authorization.fromUserId)!, to: caller, amount: take,
       note: authorization.note, visibility: authorization.visibility,
-      requestId: null, settlementId: null, authorizationId: authorization.id, createdAt: now.ts,
+      requestId: null, settlementId: null, authorizationId: authorization.id, createdAt: ts,
     });
     authorization.capturedAmount += take;
     authorization.paymentIds.push(payment.id);
     authorization.paymentId = payment.id;
     if (final || authorization.capturedAmount === authorization.amount) {
-      closeAuthorization(st, authorization, 'captured', now.ts);
+      closeAuthorization(st, authorization, 'captured', ts);
     }
     return paymentView(st, payment);
   });
@@ -119,7 +120,7 @@ export function voidAuthorization(ctx: Ctx): Result {
   if (authorization.fromUserId !== caller.id) throw forbidden('only the payer may void this authorization');
   const now = clock(st);
   const status = statusAt(authorization, now.ms);
-  if (status === 'open') closeAuthorization(st, authorization, 'voided', now.ts);
+  if (status === 'open') closeAuthorization(st, authorization, 'voided', issue(st, now));
   else if (status !== 'voided') throw conflict('authorization_not_open', `the authorization is ${status}`);
   return { status: 200, body: authorizationView(st, authorization, now.ms) };
 }

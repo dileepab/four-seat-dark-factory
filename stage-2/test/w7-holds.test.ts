@@ -472,6 +472,27 @@ describe('expiry by the clock (W7.6)', () => {
   });
 });
 
+describe('the service clock', () => {
+  it('reads and refused writes change nothing, not even the last issued timestamp', async () => {
+    await reset(port, fixture({ authorization_ttl_seconds: 1 }));
+    const [a, b] = await Promise.all([login(port, 'ada'), login(port, 'bob')]);
+    const h = await hold(a, 'bob', 1000);
+    await sleep(Date.parse(h.expires_at) - Date.now() + 50);
+    const snapshot = (await request(port, 'GET', '/_test/export')).body;
+    await sleep(20);
+    await a.get('/me');
+    await a.get('/authorizations?status=expired');
+    expectError(await capture(b, h.authorization_id), 409, 'authorization_expired');
+    expectError(await voidIt(a, h.authorization_id), 409, 'authorization_not_open');
+    expectError(await a.post('/payments', { json: { to_handle: 'bob', amount: 10_001 }, key: key() }), 409, 'insufficient_funds');
+    expectError(await authorize(a, { to_handle: 'bob', amount: 10_001 }), 409, 'insufficient_funds');
+    assert.deepEqual((await request(port, 'GET', '/_test/export')).body, snapshot);
+    const p = (await a.post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() })).body;
+    assert.ok(p.created_at > h.created_at);
+    assert.equal((await request(port, 'GET', '/_test/export')).body.state.last_ts, p.created_at);
+  });
+});
+
 describe('funds judged on available (W7.7)', () => {
   it('refuses payments, request payments and settlements that only total would cover', async () => {
     await hold(cy, 'bob', 400); // cy: total 500, available 100
