@@ -54,3 +54,42 @@ export function heldIn(st: State, user: User, view: View): number {
   for (const a of st.authorizationsOf.get(user.id) ?? []) held += holdIn(st, a, view);
   return held;
 }
+
+// Whether the user's total and available stay at or above 0 at every instant up to `nowKey`
+// at which one of their payments takes effect or one of their holds changes, under the latest
+// revisions, with `replace` standing in for its payment's latest; the movements of one instant
+// are combined first (plan 3.9 step 13, I58).
+export function historyStaysCovered(
+  st: State, user: User, nowKey: string, replace: { payment: Payment; revision: Revision } | null,
+): boolean {
+  const events: { key: string; total: number; held: number }[] = [];
+  for (const p of st.paymentsOf.get(user.id) ?? []) {
+    const r = replace !== null && replace.payment === p ? replace.revision : p.revisions[p.revisions.length - 1];
+    events.push({ key: r.effKey, total: deltaFor(p, user.id, r.amount), held: 0 });
+  }
+  // A hold changes only at its creation, its captures, its close and its deadline: record the
+  // change in what it holds at each of those instants.
+  for (const a of st.authorizationsOf.get(user.id) ?? []) {
+    if (a.seededClosed) continue;
+    const points = [a.createdKey, a.expiresKey, ...(st.capturesOf.get(a.id) ?? []).map((p) => p.createdKey)];
+    if (a.closedKey !== null) points.push(a.closedKey);
+    let previous = 0;
+    for (const key of new Set(points.sort())) {
+      const holding = holdIn(st, a, { T: key, K: null, C: Number.MAX_SAFE_INTEGER });
+      if (holding !== previous) events.push({ key, total: 0, held: holding - previous });
+      previous = holding;
+    }
+  }
+  events.sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+  let total = user.opening;
+  let held = 0;
+  for (let i = 0; i < events.length && events[i].key <= nowKey;) {
+    const key = events[i].key;
+    for (; i < events.length && events[i].key === key; i++) {
+      total += events[i].total;
+      held += events[i].held;
+    }
+    if (total < 0 || total - held < 0) return false;
+  }
+  return true;
+}

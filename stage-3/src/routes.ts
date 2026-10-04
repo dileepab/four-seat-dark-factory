@@ -8,6 +8,7 @@ import {
 import { me } from './handlers/me.ts';
 import { statement } from './handlers/statement.ts';
 import { activity, createPayment } from './handlers/payments.ts';
+import { correctPayment, listRevisions } from './handlers/corrections.ts';
 import { cancelRequest, createRequest, declineRequest, listRequests, payRequest } from './handlers/requests.ts';
 import { createSettlement } from './handlers/settlements.ts';
 import { createSplit } from './handlers/splits.ts';
@@ -31,6 +32,8 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/statement', handler: statement },
   { method: 'POST', path: '/payments', handler: createPayment },
   { method: 'GET', path: '/activity', handler: activity },
+  { method: 'POST', path: '/payments/{id}/corrections', handler: correctPayment },
+  { method: 'GET', path: '/payments/{id}/revisions', handler: listRevisions },
   { method: 'POST', path: '/requests', handler: createRequest },
   { method: 'GET', path: '/requests', handler: listRequests },
   { method: 'POST', path: '/requests/{id}/pay', handler: payRequest },
