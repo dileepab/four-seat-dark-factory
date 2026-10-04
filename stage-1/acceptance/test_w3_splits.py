@@ -181,6 +181,21 @@ def test_split_note_defaults_to_empty(world):
     assert s["note"] == "" and s["requests"][0]["note"] == ""
 
 
+def test_unknown_split_fields_are_ignored(five):
+    """§3.4: unknown body fields are ignored, never an error, and cannot steer the split."""
+    ada = five.client("ada")
+    plain = expect(ada.split(1000, ["ada", "bob", "cy"], note="n"), 201)
+    extra = expect(ada.split(1000, ["ada", "bob", "cy"], note="n", colour="blue", split_id="sp_mine",
+                             currency="USD", shares=[{"handle": "bob", "amount": 1000}],
+                             requests=[], requester_handle="cy", created_at="1999-01-01T00:00:00+00:00"), 201)
+    check_split(extra, "ada", 1000, ["ada", "bob", "cy"], "n")
+    assert "colour" not in extra and extra["split_id"] != "sp_mine" and extra["currency"] == "EUR"
+    assert not extra["created_at"].startswith("1999")
+    assert extra["shares"] == plain["shares"]
+    strip = lambda rs: [(r["payer_handle"], r["requester_handle"], r["amount"], r["note"]) for r in rs]
+    assert strip(extra["requests"]) == strip(plain["requests"])
+
+
 def test_failed_split_creates_nothing(world):
     before = world.bob.requests()
     expect_error(world.ada.split(100, ["bob", "nobody"]), 404, "not_found")
