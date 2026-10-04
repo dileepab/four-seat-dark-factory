@@ -190,3 +190,24 @@ The product needs no change. A rerun of the touched test on 16adbc0 carries the 
 
 - `stage-2/Dockerfile` still says "Pocketful stage 1" in its comment.
 - Three builder expiry tests wait without a bound when expiry never comes (seen under A03). A bounded wait would fail fast instead.
+
+## W7: APPROVED @ 16adbc08c6e4f775105e12c5893eccadbefb5a61 (re-review after the X15 block)
+
+The product is unchanged. Suite 5e17085 changes tests only (`test_w7_fixture.py`, `test_w7_expiry.py`, `test_w8_export_import.py`). It adds:
+- the W7.8 reset re-base test (X15);
+- the W8.2 exact-deadline import test;
+- a W7.6 test that reads about 50 ms after the deadline on the service's own clock.
+
+The verifier reran the touched files on 16adbc0 (room message 5b1eb87e): `run.sh --upto 7 -- -k "test_w7_fixture or test_w7_expiry"` gave 100 passed. Together with the verdict run (1459 passed, suite cb62939), this carries the W7 PASS over to suite 5e17085 as a tests-only delta.
+
+My reruns on 16adbc0 used suite 5e17085, local servers, and the named test files only (`rerun_targeted.py`, logs in `.work/critic-h6bj/rerun_logs_w7/`):
+
+| Mutant | Result |
+|---|---|
+| Clean | 100 passed |
+| X15 | Killed by `test_reset_after_an_import_whose_clock_ran_ahead_starts_the_clock_at_the_reset`: "the seeded hold expiring in two hours is held / assert (10000, 10000, 0) == (10000, 9600, 400)" |
+| H04b (status turns 300 ms late) | Killed by `test_the_deadline_releases_the_hold_at_once_on_the_service_clock`: "authorization status: expected 'expired', got 'open'". The I30 teardown also fails: held 0 against open remainders 1000. |
+| H02b (`held` released 300 ms late) | Killed by the same test: "held 1000 at most 0.063 s after the deadline / assert (10000, 9000, 1000) == (10000, 10000, 0)" |
+| H02, H04, C06d (`>=` becomes `>` at exactly the deadline) | Survive at 16adbc0, which cannot import a schema-2 state. Equivalent in practice at this commit. The W8.2 exact-deadline import test is the deterministic check; see the W8 entry. |
+
+The block is resolved, and every other W7 finding stands as recorded above.
