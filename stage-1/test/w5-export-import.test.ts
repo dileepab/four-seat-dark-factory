@@ -165,11 +165,85 @@ describe('POST /_test/import', () => {
       { ...snapshot, state: { ...s, operator_ids: ['u_ghost'] } },
       { ...snapshot, state: { ...s, idempotency: 'x' } },
       { ...snapshot, state: { ...s, users: [{ ...users[0], password: 'correct horse' }, ...users.slice(1)] } },
+      { ...snapshot, track: 'POCKETFUL' },
+      { ...snapshot, state: { ...s, minor_units: 1 } },
+      { ...snapshot, state: { ...s, last_ts: 'yesterday' } },
+      { ...snapshot, state: { ...s, idempotency: [{ ...s.idempotency[0], response: undefined }] } },
+      { ...snapshot, state: { ...s, idempotency: [{ ...s.idempotency[0], body: 'x' }] } },
     ];
     for (const body of bad) expectError(await importInto(port, body), 422, 'validation_failed');
     expectError(await request(port, 'POST', '/_test/import', { raw: '{nope' }), 400, 'malformed_request');
     expectError(await request(port, 'POST', '/_test/import', { raw: '[]' }), 400, 'malformed_request');
     assert.deepEqual(await view([w.ada, w.bob, w.cy, w.dee]), before);
+  });
+
+  it('new timestamps are never earlier than imported ones, even from a clock running ahead', async () => {
+    const w = await populate();
+    const snapshot = (await exportFrom(port)).body;
+    const TS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00$/;
+    const ahead = (shiftLastTs: boolean) => {
+      const moved = JSON.parse(JSON.stringify(snapshot), (_k, v) => (typeof v === 'string' && TS.test(v) ? `2099${v.slice(4)}` : v));
+      if (!shiftLastTs) moved.state.last_ts = snapshot.state.last_ts;
+      return moved;
+    };
+    for (const shiftLastTs of [true, false]) {
+      assert.equal((await importInto(port, ahead(shiftLastTs))).status, 204);
+      const latest = ahead(shiftLastTs).state.payments.map((p: any) => p.created_at).sort().at(-1);
+      assert.ok(latest.startsWith('2099'));
+      const fresh = (await w.ada.post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() })).body;
+      assert.ok(fresh.created_at >= latest, `${fresh.created_at} < ${latest}`);
+      const feed = (await w.ada.get('/activity?limit=200')).body.payments;
+      assert.equal(feed[0].payment_id, fresh.payment_id);
+      const times = feed.map((p: any) => p.created_at);
+      assert.deepEqual(times, times.slice().sort().reverse(), 'the feed stays newest first');
+    }
+  });
+
+  it('an export taken during a burst of payments is one consistent snapshot', async () => {
+    const users = Array.from({ length: 10 }, (_, i) => user(`b${i}`, 1000));
+    await reset(port, fixture({ users }));
+    const clients = await Promise.all(users.map((u) => login(port, u.handle as string)));
+    const pay = (i: number) => clients[i % 10].post('/payments', { json: { to_handle: `b${(i * 3 + 1) % 10}`, amount: 37 }, key: key() });
+    const replies = await Promise.all([
+      ...Array.from({ length: 25 }, (_, i) => pay(i)),
+      exportFrom(port),
+      ...Array.from({ length: 24 }, (_, i) => pay(i + 25)),
+    ]);
+    const exported = (replies[25] as Awaited<ReturnType<typeof exportFrom>>).body.state;
+    for (const u of exported.users) {
+      const received = exported.payments.filter((p: any) => p.to_user_id === u.id).reduce((a: number, p: any) => a + p.amount, 0);
+      const sent = exported.payments.filter((p: any) => p.from_user_id === u.id).reduce((a: number, p: any) => a + p.amount, 0);
+      assert.equal(u.balance, 1000 + received - sent, `${u.handle}: balance and payments disagree`);
+    }
+    assert.equal(exported.users.reduce((a: number, u: any) => a + u.balance, 0), 10_000);
+    const keyed = exported.idempotency.filter((r: any) => r.path === '/payments').length;
+    assert.equal(keyed, exported.payments.length, 'one key record per exported payment');
+    assert.equal((await importInto(other.port, { track: 'pocketful', format_version: 1, state: exported })).status, 204);
+    for (const u of exported.users) {
+      const me = (await new Client(other.port, (await login(other.port, u.handle)).token).get('/me')).body;
+      assert.equal(me.balance, u.balance);
+    }
+  });
+
+  it('reset and import accept nesting up to 80 levels and refuse 81 with 400 (D38)', async () => {
+    // `levels` containers in all: the top-level object plus levels - 1 nested arrays.
+    const nest = (levels: number): unknown => {
+      let v: unknown = 1;
+      for (let i = 0; i < levels - 1; i++) v = [v];
+      return v;
+    };
+    assert.equal((await request(port, 'POST', '/_test/reset', { json: { ...fixture(), x: nest(80) } })).status, 204);
+    const zed = fixture({ users: [user('zed', 1)] });
+    expectError(await request(port, 'POST', '/_test/reset', { json: { ...zed, x: nest(81) } }), 400, 'malformed_request');
+    const ada = await login(port, 'ada'); // the refused reset changed nothing
+    const snapshot = (await exportFrom(port)).body;
+    const later = (await ada.post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() })).body;
+    expectError(await importInto(port, { ...snapshot, x: nest(81) }), 400, 'malformed_request');
+    assert.deepEqual((await ada.get('/activity')).body.payments, [later], 'the refused import changed nothing');
+    assert.equal((await importInto(port, { ...snapshot, x: nest(80) })).status, 204);
+    assert.deepEqual((await ada.get('/activity')).body.payments, []);
+    expectError(await ada.post('/payments', { json: { to_handle: 'bob', amount: 1, x: nest(65) }, key: key() }), 400, 'malformed_request');
+    assert.equal((await ada.post('/payments', { json: { to_handle: 'bob', amount: 1, x: nest(64) }, key: key() })).status, 201);
   });
 
   it('accepts an export holding a stored body nested 64 levels deep', async () => {
