@@ -306,6 +306,8 @@ def corrupt(body: dict, rich: dict, how: str) -> dict:
     elif how == "snapshot cutoff beyond the sequence":
         rec = _snapshot_record(state, rich["snaps"]["bob"].snapshot)
         ints = [k for k, v in rec.items() if type(v) is int]
+        if len(ints) > 1:       # schema 4 also keeps the snapshot's payment form, 3 or 4 (PLAN 3.11, D106)
+            ints = [k for k in ints if rec[k] not in (3, 4)]
         assert len(ints) == 1, f"the snapshot record has {len(ints)} integer fields, not one cutoff; this probe cannot run"
         rec[ints[0]] = 10 ** 12
     elif how == "base captured amount not adding up":
