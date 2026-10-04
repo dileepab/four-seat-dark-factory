@@ -7,7 +7,7 @@ import { activity, createPayment } from './handlers/payments.ts';
 import { cancelRequest, createRequest, declineRequest, listRequests, payRequest } from './handlers/requests.ts';
 import { createSettlement } from './handlers/settlements.ts';
 import { createSplit } from './handlers/splits.ts';
-import { health, reset } from './handlers/system.ts';
+import { exportSnapshot, health, importSnapshot, reset } from './handlers/system.ts';
 
 export interface Route {
   method: string;
@@ -19,6 +19,8 @@ export interface Route {
 const ROUTES: Route[] = [
   { method: 'GET', path: '/health', handler: health },
   { method: 'POST', path: '/_test/reset', testBody: true, handler: reset },
+  { method: 'GET', path: '/_test/export', handler: exportSnapshot },
+  { method: 'POST', path: '/_test/import', testBody: true, handler: importSnapshot },
   { method: 'POST', path: '/auth/signup', handler: signup },
   { method: 'POST', path: '/auth/login', handler: login },
   { method: 'GET', path: '/me', handler: me },

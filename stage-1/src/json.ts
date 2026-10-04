@@ -9,8 +9,8 @@ export const MAX_DEPTH = 64;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
 // Parse a request body that must be one JSON object (plan 3.2): valid UTF-8, valid JSON,
-// not empty, nested at most MAX_DEPTH levels, no unpaired surrogates, an object at the top.
-export function parseObject(raw: Buffer): JsonObject {
+// not empty, nested at most `maxDepth` levels, no unpaired surrogates, an object at the top.
+export function parseObject(raw: Buffer, maxDepth = MAX_DEPTH): JsonObject {
   let text: string;
   try {
     text = utf8.decode(raw);
@@ -24,7 +24,7 @@ export function parseObject(raw: Buffer): JsonObject {
   } catch {
     throw malformed('the request body is not valid JSON');
   }
-  checkShape(value);
+  checkShape(value, maxDepth);
   if (!isObject(value)) throw malformed('the request body must be a JSON object');
   return value;
 }
@@ -38,14 +38,14 @@ export function has(obj: JsonObject, key: string): boolean {
 }
 
 // Depth and text checks, iterative so a hostile body cannot exhaust the stack.
-function checkShape(root: unknown): void {
+function checkShape(root: unknown, maxDepth: number): void {
   const stack: Array<[unknown, number]> = [[root, 1]];
   while (stack.length > 0) {
     const [value, depth] = stack.pop()!;
     if (typeof value === 'string') {
       if (!value.isWellFormed()) throw malformed('the request body holds an unpaired surrogate');
     } else if (typeof value === 'object' && value !== null) {
-      if (depth > MAX_DEPTH) throw malformed(`the request body is nested deeper than ${MAX_DEPTH} levels`);
+      if (depth > maxDepth) throw malformed(`the request body is nested deeper than ${maxDepth} levels`);
       if (Array.isArray(value)) {
         for (const item of value) stack.push([item, depth + 1]);
       } else {

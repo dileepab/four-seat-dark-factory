@@ -40,10 +40,10 @@ cd stage-1 && npm test
 ## Acceptance suite
 
 The verifier's suite lives in `stage-1/acceptance/` and is run through its own script, which
-documents its options:
+builds the image, starts two containers and documents its options:
 
 ```sh
-stage-1/acceptance/run.sh
+stage-1/acceptance/run.sh --name pf-<seat>-acc --port <first free port>
 ```
 
 ## Supplied checks
@@ -58,5 +58,7 @@ scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 -
 - `src/main.ts` — entry point; `src/app.ts` — HTTP transport, body limits, error envelope;
   `src/routes.ts` — the route table; `src/handlers/` — one module per endpoint group.
 - `src/state.ts` — the in-memory state, ids and timestamps; `src/fixture.ts` — reset
-  validation; `src/passwords.ts` — scrypt hashing and bearer tokens.
+  validation; `src/snapshot.ts` — export and import; `src/idempotency.ts` — idempotent
+  write paths; `src/ledger.ts` — moving money; `src/passwords.ts` — scrypt hashing and
+  bearer tokens.
 - `test/` — builder tests.

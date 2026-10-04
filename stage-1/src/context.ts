@@ -14,6 +14,7 @@ export interface Ctx {
   params: Record<string, string>; // decoded path parameters
   body: Buffer;
   tooLarge: boolean;
+  maxDepth: number; // reset and import allow deeper bodies: an export nests stored request bodies
 }
 
 export interface Result {
@@ -24,7 +25,7 @@ export interface Result {
 // The body as one JSON object: 422 when over the size limit, 400 when unreadable.
 export function readJson(ctx: Ctx): JsonObject {
   if (ctx.tooLarge) throw invalid('the request body is larger than this endpoint accepts');
-  return parseObject(ctx.body);
+  return parseObject(ctx.body, ctx.maxDepth);
 }
 
 // `Authorization: Bearer <token>`: scheme case-insensitive, one or more spaces, a token

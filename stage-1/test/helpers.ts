@@ -134,3 +134,35 @@ export function expectError(reply: Reply, status: number, code: string): void {
     throw new Error(`expected ${status} ${code}, got ${reply.status} ${reply.text.slice(0, 300)}`);
   }
 }
+
+// A second, independent service in its own process (the "second container" of W5).
+export async function startProcess(): Promise<Server> {
+  const { spawn } = await import('node:child_process');
+  const net = await import('node:net');
+  const port = await new Promise<number>((resolve) => {
+    const probe = net.createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port: free } = probe.address() as AddressInfo;
+      probe.close(() => resolve(free));
+    });
+  });
+  const child = spawn(process.execPath, [new URL('../src/main.ts', import.meta.url).pathname], {
+    env: { ...process.env, PORT: String(port) }, stdio: 'ignore',
+  });
+  for (let i = 0; i < 100; i++) {
+    try {
+      if ((await request(port, 'GET', '/health')).status === 200) break;
+    } catch {
+      // not listening yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return {
+    base: `http://127.0.0.1:${port}`,
+    port,
+    close: () => new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+      child.kill('SIGTERM');
+    }),
+  };
+}

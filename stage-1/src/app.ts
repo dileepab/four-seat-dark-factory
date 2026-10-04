@@ -4,10 +4,13 @@ import http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Ctx, Result } from './context.ts';
 import { ApiError, errorBody, notFound } from './errors.ts';
+import { MAX_DEPTH } from './json.ts';
 import { matchRoute } from './routes.ts';
 
 const API_BODY_LIMIT = 1024 * 1024; // 1 MiB (D8)
 const TEST_BODY_LIMIT = 64 * 1024 * 1024; // reset and import (D8)
+// An export wraps stored request bodies (themselves up to MAX_DEPTH deep) in a few levels.
+const TEST_BODY_DEPTH = MAX_DEPTH + 16;
 const MAX_HEADER_SIZE = 1024 * 1024 + 16 * 1024; // header blocks up to 1 MiB (D28)
 // Idle keep-alive connections outlive any client pool's idle reuse window (D35).
 const KEEP_ALIVE_TIMEOUT = 65_000;
@@ -53,6 +56,7 @@ async function dispatch(req: http.IncomingMessage): Promise<Result> {
   if (!match) throw notFound(`no route for ${method} ${rawPath}`);
   const ctx: Ctx = {
     method, path: match.path, query, headers: req.headers, params: match.params, body, tooLarge,
+    maxDepth: match.route.testBody ? TEST_BODY_DEPTH : MAX_DEPTH,
   };
   return await match.route.handler(ctx);
 }
