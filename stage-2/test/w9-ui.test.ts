@@ -154,10 +154,12 @@ describe('HTML routes and static files (W9.1)', () => {
       assert.equal(reply.headers['content-type'], type, name);
       assert.ok(!/https?:\/\/(?!www\.w3\.org)/.test(reply.text), `${name} loads nothing from another origin`);
     }
-    for (const path of ['/assets/', '/assets/nope.js', '/assets/../src/main.ts', '/assets/app.js/x', '/assets']) {
+    for (const path of ['/assets/', '/assets/nope.js', '/assets/../src/main.ts', '/assets/app.js/x', '/assets',
+      '/assets/%2e%2e/Dockerfile', '/assets/..%2Fpackage.json', '/Dockerfile']) {
       const reply = await request(port, 'GET', path);
       assert.equal(reply.status, 404, path);
       assert.equal(reply.body?.error?.code, 'not_found');
+      assert.ok(!/docker|package|main\.ts|nope/i.test(reply.text), `${path}: the 404 does not echo the path`);
     }
   });
 

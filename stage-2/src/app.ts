@@ -61,7 +61,8 @@ async function dispatch(req: http.IncomingMessage): Promise<Result> {
   if (!match) {
     const missing = method === 'GET' ? notFoundPage(req.headers.accept) : null;
     if (missing) return missing;
-    throw notFound(`no route for ${method} ${rawPath}`);
+    // The path is not echoed: a probe such as /assets/%2e%2e/Dockerfile gets nothing back of it.
+    throw notFound(`no route for ${method} on this path`);
   }
   const ctx: Ctx = {
     method, path: match.path, query, headers: req.headers, params: match.params, body, tooLarge,
