@@ -87,12 +87,12 @@ def assert_restored(svc, rich, before) -> None:
 
 # ---------------------------------------------------------------- W8.1 export
 
-@pytest.mark.item(17)    # the schema number changes in W17.1
-def test_export_has_format_version_1_and_schema_3(world):
+@pytest.mark.item(21)    # the schema number changes in W17.1 and again in W21.1
+def test_export_has_format_version_1_and_schema_4(world):
     body = world.svc.export().body
     assert body["track"] == "pocketful" and body["format_version"] == 1
-    assert body["state"].get("schema") == 3 and type(body["state"]["schema"]) is int, \
-        "PLAN 3.11 (S3, D76): the state carries schema 3 and format_version stays 1"
+    assert body["state"].get("schema") == 4 and type(body["state"]["schema"]) is int, \
+        "stage-4 PLAN 3.11 (D102): the state carries schema 4 and format_version stays 1"
 
 
 def test_export_holds_no_plaintext_password(svc):
@@ -414,7 +414,7 @@ def corrupt(snap: Snapshot, how: str, api_view: dict, rich: dict | None = None):
     return body
 
 
-REJECTS = ["schema 0", "schema 4", 'schema "2"', "schema null", "schema 2.5", "schema missing",
+REJECTS = ["schema 0", "schema 5", 'schema "2"', "schema null", "schema 2.5", "schema missing",
            "unknown status", "captured above amount", "captured above amount, captured",
            "captured above amount, voided", "captured above amount, expired", "duplicate authorization id",
            "expires_at not RFC 3339",

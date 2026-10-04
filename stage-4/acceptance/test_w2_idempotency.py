@@ -2,8 +2,9 @@
 stage-2 PLAN 3.9, D61).
 
 I15 replay, I16 key reuse, I17 concurrent first use, I18 failures claim nothing, I19 key scope.
-Every scenario runs on each of the eight idempotent write paths (stage 3 adds
-`POST /payments/{id}/corrections`, W16.2); each path carries the work item that introduces it.
+Every scenario runs on each of the ten idempotent write paths (stage 3 adds
+`POST /payments/{id}/corrections`, W16.2; stage 4 adds `POST /payments/{id}/refunds`, W19.1, and
+`POST /correction-batches`, W20.3); each path carries the work item that introduces it.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import json
 
 import pytest
 
-from support import expect, expect_error, fixture, new_key, no_failures, standard_users, tally
+from support import batch_item, expect, expect_error, fixture, new_key, no_failures, standard_users, tally
 
 
 class Op:
@@ -163,6 +164,47 @@ class Corrections(Op):
         expect(world.ada.correct(ctx["pid"], 2, 70, ctx["at"]), 201)
 
 
+class Refunds(Op):
+    """Stage 4, the ninth path (W19.1): bob refunds ada's payment to him."""
+    name = "refunds"
+    caller = "bob"
+
+    def setup(self, world):
+        p = expect(world.ada.pay("bob", 1_000, note="to refund"), 201)
+        return {"pid": p["payment_id"], "at": p["created_at"]}
+
+    def path(self, ctx): return f"/payments/{ctx['pid']}/refunds"
+    def body(self, ctx): return {"amount": 100}
+    def alt_body(self, ctx): return {"amount": 101}
+    def bad_body(self, ctx): return {"amount": 0}
+    def float_body(self, ctx): return '{ "amount" : 1E2 }'
+
+    def mutate(self, world, ctx, first):
+        expect(world.bob.refund(ctx["pid"], 50), 201)
+        expect(world.ada.correct(ctx["pid"], 1, 900, ctx["at"]), 201)
+
+
+class Batches(Op):
+    """Stage 4, the tenth path (W20.3): ada, an operator, corrects bob's payment to cy in a batch."""
+    name = "batches"
+
+    def setup(self, world):
+        p = expect(world.bob.pay("cy", 100), 201)
+        return {"pid": p["payment_id"], "at": p["created_at"]}
+
+    def path(self, ctx): return "/correction-batches"
+    def body(self, ctx): return {"corrections": [batch_item(ctx["pid"], 1, 60, ctx["at"], "fix")]}
+    def alt_body(self, ctx): return {"corrections": [batch_item(ctx["pid"], 1, 61, ctx["at"], "fix")]}
+    def bad_body(self, ctx): return {"corrections": []}
+
+    def float_body(self, ctx):
+        return ('{"corrections": [{"reason": "fix", "effective_at": "%s", "amount": 6E1, "expected_revision": 1.0,'
+                ' "payment_id": "%s"}]}' % (ctx["at"], ctx["pid"]))
+
+    def mutate(self, world, ctx, first):
+        expect(world.ada.batch([batch_item(ctx["pid"], 2, 70, ctx["at"], "again")]), 201)
+
+
 OPS = [
     pytest.param(Payments(), marks=pytest.mark.item(2), id="payments"),
     pytest.param(Requests(), marks=pytest.mark.item(3), id="requests"),
@@ -172,6 +214,8 @@ OPS = [
     pytest.param(Authorizations(), marks=pytest.mark.item(7), id="authorizations"),
     pytest.param(Capture(), marks=pytest.mark.item(7), id="capture"),
     pytest.param(Corrections(), marks=pytest.mark.item(16), id="corrections"),
+    pytest.param(Refunds(), marks=pytest.mark.item(19), id="refunds"),
+    pytest.param(Batches(), marks=pytest.mark.item(20), id="batches"),
 ]
 
 pytestmark = pytest.mark.item(2)
@@ -190,6 +234,11 @@ def snapshot(world, op) -> dict:
     elif op.name == "corrections":
         snap["revisions"] = {p["payment_id"]: [(r["revision"], r["amount"]) for r in world.ada.revisions(p["payment_id"])]
                              for p in world.ada.feed() if p["from_handle"] == "ada"}
+    elif op.name == "batches":
+        snap["revisions"] = {p["payment_id"]: [(r["revision"], r["amount"]) for r in world.bob.revisions(p["payment_id"])]
+                             for p in world.bob.feed() if p["from_handle"] == "bob"}
+    elif op.name == "refunds":
+        snap["money"] = {h: world.svc.client(h).money() for h in ("ada", "bob")}
     elif op.name != "payments":
         for h in ("ada", "bob", "cy"):
             snap[f"req_{h}"] = sorted((r["request_id"], r["status"]) for r in world.svc.client(h).requests())
@@ -432,3 +481,26 @@ def test_same_key_on_the_seven_paths_is_independent(world):
     assert p1["authorization_id"] == a1 and p2["authorization_id"] == a2
     expect(bob.authorize("ada", 100, key=key), 201)
     assert ada.money() == (10_000 - 5 - 10 - 1 - 200, 10_000 - 5 - 10 - 1 - 200, 0)
+
+
+@pytest.mark.item(20)
+def test_same_key_on_the_ten_paths_is_independent(world):
+    """F4, I19: stage 1's five, authorizations, captures, corrections, refunds and correction batches."""
+    ada, bob = world.ada, world.bob
+    key = new_key()
+    p = expect(ada.pay("bob", 500, key=key), 201)
+    expect(ada.ask("bob", 5, key=key), 201)
+    rq = expect(bob.ask("ada", 10, key=key), 201)["request_id"]
+    expect(ada.pay_request(rq, key=key), 201)
+    expect(ada.split(30, ["ada", "bob"], key=key), 201)
+    expect(ada.settle([{"from_handle": "ada", "to_handle": "dee", "amount": 1}], key=key), 201)
+    a = expect(ada.authorize("bob", 100, key=key), 201)["authorization_id"]
+    expect(bob.capture(a, {}, key=key), 201)
+    expect(ada.correct(p["payment_id"], 1, 400, p["created_at"], key=key), 201)
+    r = expect(bob.refund(p["payment_id"], 50, key=key), 201)
+    assert r["refund_of"] == p["payment_id"]
+    q = expect(bob.pay("cy", 20), 201)
+    b = expect(ada.batch([batch_item(q, 1, 10)], key=key), 201)
+    assert b["revisions"][0]["payment_id"] == q["payment_id"]
+    assert ada.money() == (10_000 - 400 - 10 - 1 - 100 + 50, 10_000 - 400 - 10 - 1 - 100 + 50, 0)
+    assert bob.money() == (2_500 + 400 + 10 + 100 - 50 - 10, 2_500 + 400 + 10 + 100 - 50 - 10, 0)

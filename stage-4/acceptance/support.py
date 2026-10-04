@@ -1,9 +1,8 @@
-"""Shared helpers for the stage-3 acceptance suite.
+"""Shared helpers for the stage-4 acceptance suite.
 
 Owned by the verifier. Written from the specifications
-(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md`, `stage-2.md` and `stage-3.md`) and
-`stage-3/PLAN.md` only, never from the implementation. Everything here talks to the
-service over HTTP.
+(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md` to `stage-4.md`) and `stage-4/PLAN.md`
+only, never from the implementation. Everything here talks to the service over HTTP.
 
 Invariant tracking: a `Service` remembers the total seeded by the last accepted
 reset (or carried by the last accepted import) and every account it knows. After
@@ -14,11 +13,16 @@ remainders). `Service.burst` asserts I2 on reads taken *during* a burst and I1 r
 after it.
 
 Stage 3 (`Service.history_checks`, on for `--upto 14` and later): after each test the
-`svc` fixture also asserts I1 in historical views (the `total`s at `as_of`/`known_at`
+`svc` fixture also asserts I67, I1 in historical views (the `total`s at `as_of`/`known_at`
 instants sum to the seeded total) and, for a consistent seeded history, I2 and I60 at
 every instant at which a tracked account's payments take effect or its holds change
 (`Service.assert_history_invariants`). Exact instants (PLAN 3.4) are handled by
 `instant` and `fmt_instant`, which never round.
+
+Stage 4 (`Service.refund_checks`, on for `--upto 19` and later): after each test the `svc`
+fixture also asserts I68 and I69 over every refund in the tracked accounts' statements
+(`Service.assert_refund_invariants`): a refund's links and parties, and every refunded
+payment's refunds summing to at most the amount of its latest revision.
 """
 from __future__ import annotations
 
@@ -220,12 +224,38 @@ class Api:
                 f"I56: a payment's recorded_at values strictly increase: {a} then {b}"
         return revs
 
+    # stage 4: refunds and correction batches
+    def refund(self, payment_id: str, amount: Any = _UNSET, *, key: str | None = None, body: Any = _UNSET,
+               **kw) -> httpx.Response:
+        """POST /payments/{id}/refunds with {"amount": amount} (or `body` as given)."""
+        if body is _UNSET:
+            body = {} if amount is _UNSET else {"amount": amount}
+        return self.post(f"/payments/{payment_id}/refunds", json=body, key=key or new_key(), **kw)
+
+    def batch(self, corrections: Any = _UNSET, *, key: str | None = None, body: Any = _UNSET,
+              **kw) -> httpx.Response:
+        """POST /correction-batches with {"corrections": corrections} (or `body` as given)."""
+        if body is _UNSET:
+            body = {} if corrections is _UNSET else {"corrections": corrections}
+        return self.post("/correction-batches", json=body, key=key or new_key(), **kw)
+
     def service_now(self, payer_handle: str) -> str:
         """A time mark issued by the service (W18.5): the created_at of a new request to payer_handle.
 
         It creates a pending request and moves no money.
         """
         return expect(self.ask(payer_handle, 1, note="time mark"), 201)["created_at"]
+
+
+def batch_item(payment: Any, expected_revision: Any, amount: Any, effective_at: Any = None,
+               reason: Any = "batch", **extra) -> dict:
+    """One correction of a batch; `payment` is a payment body or an id, and `effective_at` defaults to its
+    created_at."""
+    pid = payment["payment_id"] if isinstance(payment, dict) else payment
+    if effective_at is None:
+        effective_at = payment["created_at"]
+    return {"payment_id": pid, "expected_revision": expected_revision, "amount": amount,
+            "effective_at": effective_at, "reason": reason, **extra}
 
 
 def _all_pages(client: Api, path: str, field: str, params: dict) -> list[dict]:
@@ -320,11 +350,14 @@ def no_failures(results: list) -> None:
 ME_KEYS = {"user_id", "display_name", "handle", "balance", "total", "available", "held",
            "currency", "minor_units"}
 AUTH_KEYS = {"user_id", "display_name", "token"}
-PAYMENT_KEYS = {"payment_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
-                "amount", "currency", "note", "visibility", "request_id",
-                "settlement_id", "authorization_id", "created_at"}
-# D54: a replayed stage-1 body is returned verbatim, so it has no authorization_id.
-STAGE1_PAYMENT_KEYS = PAYMENT_KEYS - {"authorization_id"}
+# Stage 3's thirteen payment fields; stage 4 adds refund_of (PLAN 3.6, D91).
+STAGE3_PAYMENT_KEYS = {"payment_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
+                       "amount", "currency", "note", "visibility", "request_id",
+                       "settlement_id", "authorization_id", "created_at"}
+PAYMENT_KEYS = STAGE3_PAYMENT_KEYS | {"refund_of"}
+# D54: a replayed body is returned verbatim, so a stored stage-1 body has neither authorization_id nor
+# refund_of, and a stored stage-2 or stage-3 body has no refund_of.
+STAGE1_PAYMENT_KEYS = STAGE3_PAYMENT_KEYS - {"authorization_id"}
 REQUEST_KEYS = {"request_id", "requester_id", "requester_handle", "payer_id",
                 "payer_handle", "amount", "currency", "note", "status", "payment_id",
                 "created_at"}
@@ -339,6 +372,9 @@ AUTHZ_KEYS = STAGE2_AUTHZ_KEYS | {"closed_at"}
 AUTHZ_STATUSES = {"open", "captured", "voided", "expired"}
 # PLAN 3.6 (S3): revisions, statements and their entries.
 REVISION_KEYS = {"payment_id", "revision", "amount", "effective_at", "recorded_at", "reason"}
+# PLAN 3.6 (S4, D97): a revision recorded by a correction batch also carries correction_batch_id.
+BATCH_REVISION_KEYS = REVISION_KEYS | {"correction_batch_id"}
+BATCH_KEYS = {"correction_batch_id", "recorded_at", "revisions"}
 STATEMENT_KEYS = {"opening_balance", "entries", "closing_balance", "has_more", "snapshot"}
 ENTRY_KEYS = {"payment", "delta", "balance_after", "revision", "effective_at", "recorded_at"}
 
@@ -415,8 +451,8 @@ FAR_FUTURE = "9999-12-31T23:59:59.999999999Z"
 
 
 def check_revision(r: dict, **want) -> dict:
-    """PLAN 3.6: exactly the revision fields."""
-    assert isinstance(r, dict) and set(r) == REVISION_KEYS, \
+    """PLAN 3.6: exactly the revision fields; a batch's revision also carries its correction_batch_id (D97)."""
+    assert isinstance(r, dict) and set(r) in (REVISION_KEYS, BATCH_REVISION_KEYS), \
         f"revision keys: {sorted(r) if isinstance(r, dict) else r!r}"
     check_id(r["payment_id"], "payment_id")
     assert is_int(r["revision"]) and r["revision"] >= 1, r
@@ -430,9 +466,36 @@ def check_revision(r: dict, **want) -> dict:
         assert 1 <= len(r["reason"]) <= 200, f"a correction's reason has 1..200 code points: {r}"
         assert instant(r["effective_at"]) <= instant(r["recorded_at"]), \
             f"D81: a correction takes effect no later than now, and now is no later than its recorded_at: {r}"
+    if "correction_batch_id" in r:
+        check_batch_id(r["correction_batch_id"])
+        assert r["revision"] > 1, f"I56: revision 1 is never recorded by a batch: {r}"
     for k, v in want.items():
-        assert r[k] == v, f"revision {k}: expected {v!r}, got {r[k]!r} in {r}"
+        assert r.get(k, _UNSET) == v, f"revision {k}: expected {v!r}, got {r.get(k, '(absent)')!r} in {r}"
     return r
+
+
+def check_batch_id(v: Any) -> None:
+    """PLAN 3.6 (S4): a correction batch id is an id with the prefix cb_."""
+    check_id(v, "correction_batch_id")
+    assert v.startswith("cb_"), f"PLAN 3.6: a correction batch id has the prefix cb_: {v!r}"
+
+
+def check_batch(b: Any, n: int | None = None) -> dict:
+    """I72, PLAN 3.6: {correction_batch_id, recorded_at, revisions}; every revision n + 1 of its payment,
+    carrying the batch's id and recorded_at."""
+    assert isinstance(b, dict) and set(b) == BATCH_KEYS, \
+        f"correction batch keys: {sorted(b) if isinstance(b, dict) else b!r}"
+    check_batch_id(b["correction_batch_id"])
+    assert isinstance(b["recorded_at"], str) and PLAN_TS.match(b["recorded_at"]), \
+        f"a batch's recorded_at is issued by the service (PLAN 3.4 form): {b['recorded_at']!r}"
+    assert isinstance(b["revisions"], list) and b["revisions"], b
+    if n is not None:
+        assert len(b["revisions"]) == n, f"I72: one revision per item: {len(b['revisions'])} != {n}"
+    for r in b["revisions"]:
+        assert set(r) == BATCH_REVISION_KEYS, f"D97: a batch's revision carries correction_batch_id: {r}"
+        check_revision(r, correction_batch_id=b["correction_batch_id"], recorded_at=b["recorded_at"])
+        assert r["revision"] >= 2, r
+    return b
 
 
 def check_me_view(m: dict, *, as_of: str | None = None, known_at: str | None = None) -> dict:
@@ -474,8 +537,10 @@ def check_money(m: dict) -> dict:
     return m
 
 
-def check_payment(p: dict, **want) -> dict:
-    assert isinstance(p, dict) and set(p) == PAYMENT_KEYS, f"payment keys: {sorted(p) if isinstance(p, dict) else p!r}"
+def check_payment(p: dict, *, keys: set = PAYMENT_KEYS, **want) -> dict:
+    """PLAN 3.6: exactly the payment fields. `keys=STAGE3_PAYMENT_KEYS` checks a stored pre-stage-4 replay body
+    (D54). A refund (I68) names its target in refund_of and has no request, authorization or settlement."""
+    assert isinstance(p, dict) and set(p) == keys, f"payment keys: {sorted(p) if isinstance(p, dict) else p!r}"
     check_id(p["payment_id"], "payment_id")
     check_id(p["from_user_id"], "from_user_id")
     check_id(p["to_user_id"], "to_user_id")
@@ -487,10 +552,15 @@ def check_payment(p: dict, **want) -> dict:
     assert p["visibility"] in ("public", "private"), p
     if p["request_id"] is not None:
         check_id(p["request_id"], "request_id")
-    if p["settlement_id"] is not None:
+    if p.get("settlement_id") is not None:
         check_id(p["settlement_id"], "settlement_id")
-    if p["authorization_id"] is not None:
+    if p.get("authorization_id") is not None:
         check_id(p["authorization_id"], "authorization_id")
+    if p.get("refund_of") is not None:
+        check_id(p["refund_of"], "refund_of")
+        assert p["refund_of"] != p["payment_id"], p
+        assert p["request_id"] is None and p["authorization_id"] is None and p["settlement_id"] is None, \
+            f"I68, D91: a refund has request_id, authorization_id and settlement_id null: {p}"
     ts(p["created_at"])
     for k, v in want.items():
         assert p[k] == v, f"payment {k}: expected {v!r}, got {p[k]!r} in {p}"
@@ -571,11 +641,12 @@ def assert_newest_first(items: list[dict], field: str = "created_at") -> None:
 
 # ---------------------------------------------------------------- statements (stage 3)
 
-def check_entry(e: dict, user_id: str) -> dict:
-    """PLAN 3.6 and I54 on one statement entry of `user_id`'s statement."""
+def check_entry(e: dict, user_id: str, *, payment_keys: set = PAYMENT_KEYS) -> dict:
+    """PLAN 3.6 and I54 on one statement entry of `user_id`'s statement. `payment_keys=STAGE3_PAYMENT_KEYS` for a
+    snapshot imported from a schema-3 state, which keeps stage 3's payment form (D106)."""
     assert isinstance(e, dict) and set(e) == ENTRY_KEYS, \
         f"entry keys: {sorted(e) if isinstance(e, dict) else e!r}"
-    p = check_payment(e["payment"])
+    p = check_payment(e["payment"], keys=payment_keys)
     for k in ("delta", "balance_after", "revision"):
         assert is_int(e[k]), f"entry {k} must be an integer: {e}"
     assert e["revision"] >= 1, e
@@ -594,7 +665,7 @@ def check_entry(e: dict, user_id: str) -> dict:
 
 
 def check_statement_page(body: Any, user_id: str, *, known_at: str | None = None,
-                         snapshot: str | None = None) -> dict:
+                         snapshot: str | None = None, payment_keys: set = PAYMENT_KEYS) -> dict:
     """PLAN 3.6: the statement fields (`known_at` only when the first read sent it)."""
     want = STATEMENT_KEYS | ({"known_at"} if known_at is not None else set())
     assert isinstance(body, dict) and set(body) == want, \
@@ -609,7 +680,7 @@ def check_statement_page(body: Any, user_id: str, *, known_at: str | None = None
             f"D72: a snapshot page carries the first page's fields, its token included: {body['snapshot']!r}"
     assert isinstance(body["entries"], list), body
     for e in body["entries"]:
-        check_entry(e, user_id)
+        check_entry(e, user_id, payment_keys=payment_keys)
     return body
 
 
@@ -649,14 +720,14 @@ class Statement:
 
 
 def page_snapshot(c: "Api", user_id: str, token: str, *, known_at: str | None = None,
-                  page_limit: int = 200) -> tuple[list[dict], int, int]:
+                  page_limit: int = 200, payment_keys: set = PAYMENT_KEYS) -> tuple[list[dict], int, int]:
     """Every entry of a snapshot, page by page; every page shows the same window balances (I54)."""
     entries: list[dict] = []
     balances = None
     offset = 0
     while True:
         page = expect(c.statement_page(token, limit=page_limit, offset=offset), 200)
-        check_statement_page(page, user_id, known_at=known_at, snapshot=token)
+        check_statement_page(page, user_id, known_at=known_at, snapshot=token, payment_keys=payment_keys)
         pair = (page["opening_balance"], page["closing_balance"])
         assert balances in (None, pair), f"I54: paging changed the window balances: {balances} then {pair}"
         balances = pair
@@ -664,6 +735,19 @@ def page_snapshot(c: "Api", user_id: str, token: str, *, known_at: str | None = 
         if not page["has_more"]:
             return entries, pair[0], pair[1]
         assert len(page["entries"]) == page_limit, f"has_more with a short page: {page}"
+        offset += page_limit
+
+
+def snapshot_pages(c: "Api", token: str, *, page_limit: int = 2) -> list[dict]:
+    """Every page body of a snapshot exactly as returned (D106: compared as JSON across services)."""
+    pages: list[dict] = []
+    offset = 0
+    while True:
+        page = expect(c.statement_page(token, limit=page_limit, offset=offset), 200)
+        pages.append(page)
+        if not page.get("has_more"):
+            return pages
+        assert len(pages) < 1000, "a snapshot that never ends"
         offset += page_limit
 
 
@@ -802,6 +886,7 @@ class Service:
 
     history_checks = False   # set by conftest: --upto 14 or later
     statement_checks = False # set by conftest: --upto 15 or later (GET /statement exists)
+    refund_checks = False    # set by conftest: --upto 19 or later (refunds exist)
 
     def __init__(self, base_url: str, name: str = "A"):
         self.base_url = base_url.rstrip("/")
@@ -983,6 +1068,39 @@ class Service:
                 for h, m in mes.items():
                     assert m["total"] >= 0 and m["available"] >= 0, \
                         f"I2/I58 violated{where} on {self.name}: {h} at as_of={as_of}: {m}"
+
+    def assert_refund_invariants(self, where: str = "") -> None:
+        """Stage 4: I68 and I69 over every refund a tracked account sent. A refund's sender is its target's
+        receiver, so the target is in the same statement (every effective time is at or before the read), with
+        the amount of its latest revision (the statement's selected revision with known_at omitted)."""
+        if not self.refund_checks or self.total is None or len(self.accounts) > MAX_TRACKED_FOR_HISTORY:
+            return
+        for h in self.accounts:
+            c = self.client(h)
+            me = self.accounts[h].user_id
+            first = expect(c.statement(limit=200), 200)
+            entries, _, _ = page_snapshot(c, me, first["snapshot"])
+            pays = {e["payment"]["payment_id"]: e["payment"] for e in entries}
+            refunds: dict[str, list[dict]] = {}
+            for e in entries:
+                p = e["payment"]
+                if p["refund_of"] is not None and p["from_user_id"] == me:
+                    refunds.setdefault(p["refund_of"], []).append(p)
+            for target, rs in refunds.items():
+                assert target in pays, \
+                    f"I68 violated{where} on {self.name}: {h} refunded {target}, which is not in {h}'s statement"
+                t = pays[target]
+                assert t["refund_of"] is None, f"I71 violated{where} on {self.name}: a refund of a refund: {rs[0]}"
+                for r in rs:
+                    assert (r["from_user_id"], r["to_user_id"], r["note"], r["visibility"]) == \
+                        (t["to_user_id"], t["from_user_id"], t["note"], t["visibility"]), \
+                        f"I68 violated{where} on {self.name}: {r} is not {t} reversed with its note and visibility"
+                    assert instant(r["created_at"]) > instant(t["created_at"]), \
+                        f"I68 violated{where} on {self.name}: refund {r} is not later than its target {t}"
+                refunded = sum(r["amount"] for r in rs)
+                assert refunded <= t["amount"], \
+                    f"I69 violated{where} on {self.name}: {target}'s refunds sum to {refunded}, above its latest " \
+                    f"amount {t['amount']}"
 
     def burst(self, fn: Callable[[int], Any], n: int, *, watch: bool = True,
               timeout: float = 60.0) -> list:

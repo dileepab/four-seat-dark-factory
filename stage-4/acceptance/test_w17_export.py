@@ -110,11 +110,12 @@ def assert_restored(svc, rich, before) -> None:
 
 # ---------------------------------------------------------------- W17.1 export
 
-def test_export_holds_schema_3_and_the_snapshots_are_frozen_in_it(svc):
+def test_export_holds_the_corrections_and_the_snapshots_are_frozen_in_it(svc):
+    """Schema 3 from W17.1, schema 4 from W21.1 (test_w21_export checks the number exactly)."""
     rich = build_history(svc)
     assert rich["snaps"]["ada"].entries[0]["revision"] == 2, "known_at at revision 2's recorded_at selects it"
     body = svc.export().body
-    assert body["format_version"] == 1 and body["state"]["schema"] == 3
+    assert body["format_version"] == 1 and body["state"]["schema"] in (3, 4)
     text = json.dumps(body)
     for s in (REASON + "-2", REASON + "-3", REASON + "-4", rich["snaps"]["ada"].snapshot, rich["snaps"]["bob"].snapshot):
         assert s in text, f"PLAN 3.11: the export holds {s!r}"
@@ -322,7 +323,7 @@ REJECTS = ["revision gap", "revision 1 differs from its payment", "recorded_at d
            "opening balance does not add up", "snapshot owner unknown", "duplicate snapshot token",
            "correction reason empty", "correction amount above the maximum",
            "correction effective_at not an instant", "snapshot cutoff beyond the sequence",
-           "base captured amount not adding up", "schema 4", "schema 0"]
+           "base captured amount not adding up", "schema 5", "schema 0"]
 
 
 @pytest.mark.parametrize("how", REJECTS)

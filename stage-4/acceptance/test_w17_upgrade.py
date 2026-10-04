@@ -69,13 +69,13 @@ def test_stage_1_payments_can_be_corrected_and_members_cannot(prev, svc):
     assert rich["handles"]
 
 
-def test_a_stage_1_upgrade_exports_as_schema_3_and_round_trips(prev, svc, svc_b):
+def test_a_stage_1_upgrade_exports_and_round_trips(prev, svc, svc_b):
     rich = upgrade(prev, svc)
     p = [x for x in svc.client("ada").feed() if x["from_handle"] == "ada" and x["settlement_id"] is None][0]
     key = new_key()
     r = expect(svc.client("ada").correct(p["payment_id"], 1, p["amount"] + 2, p["created_at"], key=key), 201)
     snap = svc.export()
-    assert snap.body["state"]["schema"] == 3
+    assert snap.body["state"]["schema"] in (3, 4), "schema 3 from W17.1, schema 4 from W21.1"
     expect(svc_b.import_(snap), 204)
     assert expect(svc_b.client("ada").correct(p["payment_id"], 1, p["amount"] + 2, p["created_at"], key=key), 200) == r
     for h in rich["handles"]:
@@ -109,7 +109,8 @@ def test_stage_2_state_reads_back_with_closed_at(prev2, svc):
         c = svc.client(h)
         old = rich["before"][h]
         assert c.me() == old["me"]
-        assert c.feed() == old["feed"]
+        assert c.feed() == [{**p, "refund_of": None} for p in old["feed"]], \
+            "stage-4 PLAN 3.6: the only change to an imported payment is refund_of: null"
         assert c.requests() == old["requests"]
         auths = c.auths()
         assert [{k: v for k, v in a.items() if k != "closed_at"} for a in auths] == old["auths"], \

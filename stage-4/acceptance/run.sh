@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# Stage-3 acceptance suite (verifier-owned). One command:
+# Stage-4 acceptance suite (verifier-owned). One command:
 #
-#   stage-3/acceptance/run.sh [--upto N] [--name PREFIX] [--port PORT] [--shots DIR] [-- extra pytest args]
+#   stage-4/acceptance/run.sh [--upto N] [--name PREFIX] [--port PORT] [--shots DIR] [-- extra pytest args]
 #
-# Builds the image from this stage folder and the frozen stage-1/ and stage-2/ folders beside
-# it, starts four containers with the graded limits (2 vCPU, 2 GiB): A and B from this stage
-# (B for the import-into-another-container checks), P from stage-1/ and Q from stage-2/ (the
-# previous services of the upgrade checks). It waits for /health, runs the whole suite, and
-# removes them.
+# Builds the image from this stage folder and the frozen stage-1/, stage-2/ and stage-3/ folders
+# beside it, starts five containers with the graded limits (2 vCPU, 2 GiB): A and B from this stage
+# (B for the import-into-another-container checks), P from stage-1/, Q from stage-2/ and R from
+# stage-3/ (the previous services of the upgrade checks). It waits for /health, runs the whole
+# suite, and removes them.
 #
-#   --upto N     only checks for work items up to WN (default 17 = everything). The stage-1 and
-#                stage-2 regression checks (items 1-13) always run.
+#   --upto N     only checks for work items up to WN (default 21 = everything). The stage-1 to
+#                stage-3 regression checks (items 1-18) always run.
 #   --name P     container/image name prefix (default pf-verifier-acc). Use pf-<seat>-acc.
 #   --port P     first of 16 host ports to use (default 18201). builder 181xx, verifier 182xx,
 #                critic 183xx, planner 184xx.
 #   --stage-dir D  the stage folder to build (default: the folder holding this suite). Lets a
 #                verdict run this suite against a clean worktree of the handed-off commit.
-#                The previous services are built from D/../stage-1 and D/../stage-2.
+#                The previous services are built from D/../stage-1, D/../stage-2 and D/../stage-3.
 #   --shots DIR  save one screenshot per named UI state at both widths into DIR.
 #
 # Against services that are already running (container checks are then deselected):
 #
-#   stage-3/acceptance/run.sh --base-url URL --second-base-url URL --previous-base-url URL \
-#       --previous2-base-url URL [--upto N]
+#   stage-4/acceptance/run.sh --base-url URL --second-base-url URL --previous-base-url URL \
+#       --previous2-base-url URL --previous3-base-url URL [--upto N]
 #
 # Needs python3 with pytest, httpx and Playwright (Chromium); defaults to the harness venv
 # ($PYTHON overrides).
@@ -31,13 +31,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 STAGE_DIR="$(dirname "$HERE")"
 PY="${PYTHON:-$HOME/df-spec/.venv/bin/python}"
-UPTO=17
+UPTO=21
 NAME=pf-verifier-acc
 PORT=18201
 BASE_URL=""
 SECOND_URL=""
 PREV_URL=""
 PREV2_URL=""
+PREV3_URL=""
 SHOTS=""
 EXTRA=()
 
@@ -51,6 +52,7 @@ while [ $# -gt 0 ]; do
     --second-base-url) SECOND_URL="$2"; shift 2 ;;
     --previous-base-url) PREV_URL="$2"; shift 2 ;;
     --previous2-base-url) PREV2_URL="$2"; shift 2 ;;
+    --previous3-base-url) PREV3_URL="$2"; shift 2 ;;
     --shots) mkdir -p "$2"; SHOTS="$(cd "$2" && pwd)"; shift 2 ;;
     --) shift; EXTRA=("$@"); break ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -66,20 +68,23 @@ if [ -n "$BASE_URL" ]; then
   [ -n "$SECOND_URL" ] && args+=(--second-base-url "$SECOND_URL")
   [ -n "$PREV_URL" ] && args+=(--previous-base-url "$PREV_URL")
   [ -n "$PREV2_URL" ] && args+=(--previous2-base-url "$PREV2_URL")
+  [ -n "$PREV3_URL" ] && args+=(--previous3-base-url "$PREV3_URL")
   exec "$PY" -m pytest "$HERE" -p no:cacheprovider -q "${args[@]}" \
     ${SHOT_ARGS[@]+"${SHOT_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
 fi
 
 PREV_DIR="$(cd "$STAGE_DIR/../stage-1" && pwd)"
 PREV2_DIR="$(cd "$STAGE_DIR/../stage-2" && pwd)"
+PREV3_DIR="$(cd "$STAGE_DIR/../stage-3" && pwd)"
 PORT_A=$PORT
 PORT_B=$((PORT + 1))
 PORT_P=$((PORT + 2))
 PORT_Q=$((PORT + 3))
+PORT_R=$((PORT + 4))
 SPARE=$((PORT + 10))
 
 cleanup() {
-  docker rm -f "$NAME-a" "$NAME-b" "$NAME-p" "$NAME-q" "$NAME-nonet" "$NAME-uinonet" "$NAME-port" \
+  docker rm -f "$NAME-a" "$NAME-b" "$NAME-p" "$NAME-q" "$NAME-r" "$NAME-nonet" "$NAME-uinonet" "$NAME-port" \
     "$NAME-defport" "$NAME-limits" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -88,16 +93,18 @@ cleanup
 docker build -q -t "$NAME" "$STAGE_DIR" >/dev/null
 docker build -q -t "$NAME-prev" "$PREV_DIR" >/dev/null
 docker build -q -t "$NAME-prev2" "$PREV2_DIR" >/dev/null
-for c in a b p q; do
+docker build -q -t "$NAME-prev3" "$PREV3_DIR" >/dev/null
+for c in a b p q r; do
   p=$PORT_A; img="$NAME"
   [ "$c" = b ] && p=$PORT_B
   [ "$c" = p ] && { p=$PORT_P; img="$NAME-prev"; }
   [ "$c" = q ] && { p=$PORT_Q; img="$NAME-prev2"; }
+  [ "$c" = r ] && { p=$PORT_R; img="$NAME-prev3"; }
   docker run -d --name "$NAME-$c" --cpus 2 --memory 2g -e PORT=8080 \
     -p "127.0.0.1:$p:8080" "$img" >/dev/null
 done
 
-for p in "$PORT_A" "$PORT_B" "$PORT_P" "$PORT_Q"; do
+for p in "$PORT_A" "$PORT_B" "$PORT_P" "$PORT_Q" "$PORT_R"; do
   ok=""
   for _ in $(seq 1 240); do
     if curl -fsS "http://127.0.0.1:$p/health" >/dev/null 2>&1; then ok=1; break; fi
@@ -109,5 +116,6 @@ done
 "$PY" -m pytest "$HERE" -p no:cacheprovider -q \
   --base-url "http://127.0.0.1:$PORT_A" --second-base-url "http://127.0.0.1:$PORT_B" \
   --previous-base-url "http://127.0.0.1:$PORT_P" --previous2-base-url "http://127.0.0.1:$PORT_Q" \
+  --previous3-base-url "http://127.0.0.1:$PORT_R" \
   --stage-dir "$STAGE_DIR" --container-prefix "$NAME" --spare-port "$SPARE" \
   --upto "$UPTO" ${SHOT_ARGS[@]+"${SHOT_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}

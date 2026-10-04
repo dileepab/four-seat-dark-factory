@@ -195,19 +195,25 @@ def test_pages_and_assets_load_in_a_container_with_no_network(request, world):
 
 
 @pytest.mark.container
-@pytest.mark.item(17)
-def test_run_md_tells_a_stranger_how_to_build_run_and_test_stage_3(request):
-    """W9.6 (stage-2 plan 45fe2dc), brought to W17.5: RUN.md for stage 3."""
+@pytest.mark.item(21)
+def test_run_md_tells_a_stranger_how_to_build_run_and_test_stage_4(request):
+    """W9.6 (stage-2 plan 45fe2dc), brought to W21.5: RUN.md for stage 4; and PLAN 3.1 (S4): the Dockerfile's
+    comment names stage 4."""
     from pathlib import Path
     stage_dir = request.config.getoption("--stage-dir")
     if not stage_dir:
         pytest.fail("--stage-dir is required for the container checks")
     text = (Path(stage_dir) / "RUN.md").read_text()
     for needle, why in [("docker build", "the build command"), ("docker run", "the run command"),
-                        ("stage-3", "the stage-3 paths"), ("npm test", "the builder tests"),
+                        ("stage-4", "the stage-4 paths"), ("npm test", "the builder tests"),
                         ("acceptance", "the acceptance suite"), ("Playwright", "the browser prerequisite"),
                         ("stage-1", "the frozen stage-1 build the upgrade checks use"),
                         ("stage-2", "the frozen stage-2 build the upgrade checks use"),
-                        ("--stage 3", "the supplied checks"), ("/authorizations", "the UI routes"),
+                        ("stage-3", "the frozen stage-3 build the upgrade checks use"),
+                        ("--stage 4", "the supplied checks"), ("/authorizations", "the UI routes"),
                         ("/split", "the UI routes"), ("/login", "the UI routes")]:
         assert needle in text, f"RUN.md does not mention {needle!r} ({why})"
+    comments = " ".join(line for line in (Path(stage_dir) / "Dockerfile").read_text().splitlines()
+                        if line.lstrip().startswith("#")).lower()
+    assert "stage 4" in comments or "stage-4" in comments, \
+        f"PLAN 3.1 (S4): the Dockerfile's comment names stage 4: {comments[:300]!r}"

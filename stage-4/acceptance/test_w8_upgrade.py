@@ -40,7 +40,8 @@ def upgrade(prev, target) -> dict:
 
 
 def with_null_authorization(p: dict) -> dict:
-    return {**p, "authorization_id": None}
+    """A stage-1 payment as stage 4 shows it: authorization_id and refund_of null (stage-4 PLAN 3.6)."""
+    return {**p, "authorization_id": None, "refund_of": None}
 
 
 def test_stage_1_export_imports_and_reads_back_through_stage_2(prev, svc):
@@ -54,7 +55,7 @@ def test_stage_1_export_imports_and_reads_back_through_stage_2(prev, svc):
         feed = c.feed()
         assert feed == [with_null_authorization(p) for p in old["feed"]], f"{h}: the feed changed in the upgrade"
         for p in feed:
-            check_payment(p, authorization_id=None)
+            check_payment(p, authorization_id=None, refund_of=None)
         assert c.requests() == old["requests"]
         assert c.auths() == []
 
@@ -128,8 +129,8 @@ def test_upgraded_state_round_trips_through_a_stage_2_export(prev, svc, svc_b):
     rich = upgrade(prev, svc)
     a = expect(svc.client("ada").authorize("bob", 50), 201)
     snap2 = svc.export()
-    # Schema 3 from W17.1 (test_w8_export_import: test_export_has_format_version_1_and_schema_3).
-    assert snap2.body["state"].get("schema") in (2, 3)
+    # Schema 3 from W17.1, schema 4 from W21.1 (test_w8_export_import: test_export_has_format_version_1_and_schema_4).
+    assert snap2.body["state"].get("schema") in (2, 3, 4)
     before = observe(svc, rich["handles"])
     expect(svc_b.import_(snap2), 204)
     after = observe(svc_b, rich["handles"])
