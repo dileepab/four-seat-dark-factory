@@ -159,6 +159,24 @@ describe('POST /requests/{id}/pay', () => {
     assert.equal(await total(), 13_000);
   });
 
+  it('refuses to take the requester above 2^53 and changes nothing', async () => {
+    await reset(port, fixture({ users: [user('ada', 1000), user('rich', 2 ** 53 - 10)] }));
+    const [a, rich] = await Promise.all([login(port, 'ada'), login(port, 'rich')]);
+    const over = await askOk(rich, 'ada', 11);
+    const k = key();
+    expectError(await payReq(a, over.request_id, {}, k), 422, 'validation_failed');
+    assert.equal(await balance(a), 1000);
+    assert.equal(await balance(rich), 2 ** 53 - 10);
+    const listed = (await a.get('/requests')).body.requests.find((r: any) => r.request_id === over.request_id);
+    assert.equal(listed.status, 'pending');
+    assert.equal(listed.payment_id, null);
+    assert.deepEqual((await a.get('/activity')).body.payments, []);
+    const exact = await askOk(rich, 'ada', 10);
+    assert.equal((await payReq(a, exact.request_id, {}, k)).status, 201, 'the refused key was not claimed');
+    assert.equal(await balance(rich), 2 ** 53);
+    assert.equal(await balance(a), 990);
+  });
+
   it('seeded requests: pending ones are payable, others are 409', async () => {
     await reset(port, fixture({
       requests: [

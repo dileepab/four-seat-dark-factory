@@ -103,6 +103,17 @@ describe('POST /settlements', () => {
     assert.equal((await settle(ada, [t('ada', 'bob', 1, { colour: 'blue' })])).status, 201);
   });
 
+  it('refuses a non-object entry as batch shape, before any entry is checked (plan 3.10)', async () => {
+    const k = key();
+    expectError(await settle(ada, [t('nobody', 'bob', 1), 7], k), 422, 'validation_failed');
+    expectError(await settle(ada, [t('bob', 'bob', 1), 'x'], k), 422, 'validation_failed');
+    expectError(await settle(ada, [t('ada', 'bob', 0), null]), 422, 'validation_failed');
+    expectError(await settle(ada, [t('dee', 'bob', 5), [t('ada', 'bob', 1)]]), 422, 'validation_failed');
+    assert.deepEqual(await balances(), [10_000, 2_500, 500, 0]);
+    assert.deepEqual((await ada.get('/activity')).body.payments, []);
+    assert.equal((await settle(ada, [t('ada', 'bob', 1)], k)).status, 201, 'the refused key was not claimed');
+  });
+
   it('decides entry errors in input order, all before the funds check', async () => {
     expectError(await settle(ada, [t('nobody', 'bob', 1), t('ada', 'bob', 0)]), 404, 'not_found');
     expectError(await settle(ada, [t('ada', 'bob', 0), t('nobody', 'bob', 1)]), 422, 'validation_failed');

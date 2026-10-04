@@ -14,8 +14,7 @@ const MAX_TRANSFERS = 32;
 
 // One transfer entry by the ordinary payment rules. Malformed input inside the batch is
 // 422, never 400 (D27); then unknown handles (404), then a self-transfer.
-function readTransfer(st: State, entry: unknown, i: number): Omit<Transfer, 'settlementId' | 'createdAt'> {
-  if (!isObject(entry)) throw invalid(`transfers[${i}] must be an object`);
+function readTransfer(st: State, entry: JsonObject, i: number): Omit<Transfer, 'settlementId' | 'createdAt'> {
   const fromHandle = handleField(entry, 'from_handle', i);
   const toHandle = handleField(entry, 'to_handle', i);
   if (!has(entry, 'amount')) throw invalid(`transfers[${i}].amount is required`);
@@ -43,10 +42,16 @@ export function createSettlement(ctx: Ctx): Result {
   const key = idempotencyKey(ctx);
   const body = readJson(ctx);
   return idempotent(ctx, caller, key, body, (st) => {
+    // The batch shape first (plan 3.10): 1 to 32 entries, every one an object. Only then is
+    // each entry checked, in input order.
     const raw = body.transfers;
     if (!Array.isArray(raw)) throw invalid('transfers must be an array');
     if (raw.length < 1 || raw.length > MAX_TRANSFERS) throw invalid(`transfers holds 1 to ${MAX_TRANSFERS} entries`);
-    const transfers = raw.map((entry, i) => readTransfer(st, entry, i));
+    const entries = raw.map((entry, i) => {
+      if (!isObject(entry)) throw invalid(`transfers[${i}] must be an object`);
+      return entry;
+    });
+    const transfers = entries.map((entry, i) => readTransfer(st, entry, i));
 
     // Net position per wallet: every wallet must end at or above 0 and at or below 2^53.
     const net = new Map<User, number>();
