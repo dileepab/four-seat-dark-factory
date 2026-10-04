@@ -1,10 +1,25 @@
-# Pocketful stage 3 — how to build and run
+# Pocketful stage 4 — how to build and run
 
 An HTTP service in TypeScript on Node.js 24 (Node runs the `.ts` files directly through its
 built-in type stripping). No npm dependencies: nothing is downloaded at build or run time.
 State is held in memory; a restart starts empty.
 
-Stage 3 adds history on top of stage 2's payments, requests, splits, settlements and holds:
+Stage 4 adds refunds and batch corrections on top of stage 3:
+
+- `POST /payments/{id}/refunds` (idempotent) — the payment's receiver sends some or all of it
+  back as a new payment with `refund_of` naming the payment; refunds in all never exceed the
+  payment's latest amount. Every other payment carries `refund_of: null`. Captures and refunds
+  cannot be corrected, and a correction cannot go below what was refunded.
+- `POST /correction-batches` (idempotent, settlement operators only) — corrects up to 32
+  payments in one step, settlement members included when every member of their settlement is
+  in the batch at one effective instant; funds and history are judged on the combined effect.
+  Its revisions share one `recorded_at` and carry `correction_batch_id`.
+- `GET /_test/export` writes schema 4 (adding `refund_of`, `correction_batch_id` and each
+  statement snapshot's payment form); `POST /_test/import` reads schemas 1 to 4, so unchanged
+  stage-1, stage-2 and stage-3 exports import. A statement snapshot made by stage 3 pages its
+  payments without `refund_of`, exactly as stage 3 did.
+
+Stage 3 added history on top of stage 2's payments, requests, splits, settlements and holds:
 
 - `GET /me?as_of=<instant>&known_at=<instant>` — balances as they stood at an effective
   instant, as known at a recorded instant; holds follow their own history (creation,
@@ -17,9 +32,7 @@ Stage 3 adds history on top of stage 2's payments, requests, splits, settlements
   amount and effective time; `GET /payments/{id}/revisions` lists them to the two parties.
 - Seeded `created_at` on fixture payments and authorizations, and `closed_at` on every
   authorization.
-- `GET /_test/export` writes schema 3 (every revision, opening balances, snapshots);
-  `POST /_test/import` reads schemas 1, 2 and 3, so unchanged stage-1 and stage-2 exports
-  import.
+- Export schema 3: every revision, opening balances and snapshots.
 
 Instants in query parameters are percent-decoded only: a literal `+` in an offset stays a
 plus sign, so `?as_of=2026-09-20T12:00:00+05:30` and `...%2B05:30` are the same instant.
@@ -47,8 +60,8 @@ All commands below run from the repository root, `/Users/Dileepa/dark-factory-v3
 ## Build and run the container
 
 ```sh
-docker build -t pocketful-s3 stage-3
-docker run --rm -e PORT=8080 -p 8080:8080 pocketful-s3
+docker build -t pocketful-s4 stage-4
+docker run --rm -e PORT=8080 -p 8080:8080 pocketful-s4
 curl http://localhost:8080/health          # {"status":"ok"}
 ```
 
@@ -64,42 +77,43 @@ curl http://localhost:8080/health          # {"status":"ok"}
 Needs Node.js 24 or later.
 
 ```sh
-cd stage-3 && PORT=8080 node src/main.ts
+cd stage-4 && PORT=8080 node src/main.ts
 ```
 
 ## Builder tests
 
 Unit and integration tests with `node:test`; each file starts its own in-process server on a
 free port (the export and import tests also start a second service process). The upgrade tests
-(`test/w8-upgrade.test.ts`, `test/w17-export.test.ts`) also start the frozen stage-1 and stage-2
-services from `../stage-1/src/main.ts` and `../stage-2/src/main.ts`, read-only, as the previous
-versions whose exports stage 3 must import.
+(`test/w8-upgrade.test.ts`, `test/w17-export.test.ts`, `test/w21-export.test.ts`) also start the
+frozen stage-1, stage-2 and stage-3 services from `../stage-1/src/main.ts`, `../stage-2/src/main.ts`
+and `../stage-3/src/main.ts`, read-only, as the previous versions whose exports stage 4 must
+import.
 
 ```sh
-cd stage-3 && npm test
+cd stage-4 && npm test
 ```
 
 ## Acceptance suite
 
-The verifier's suite lives in `stage-3/acceptance/` and is run through its own script, which
-builds the images (this stage twice, and the frozen `stage-1/` and `stage-2/` beside it as the
-previous services for the upgrade checks), starts the containers and documents its options in
-its header. It runs pytest, httpx and Playwright (Chromium) from the harness venv
+The verifier's suite lives in `stage-4/acceptance/` and is run through its own script, which
+builds the images (this stage twice, and the frozen `stage-1/`, `stage-2/` and `stage-3/` beside
+it as the previous services for the upgrade checks), starts the containers and documents its
+options in its header. It runs pytest, httpx and Playwright (Chromium) from the harness venv
 `~/df-spec/.venv`:
 
 ```sh
-stage-3/acceptance/run.sh --upto <item> --name pf-<seat>-acc --port <first free port> \
-  [--stage-dir <worktree>/stage-3] [--shots <dir>]
+stage-4/acceptance/run.sh --upto <item> --name pf-<seat>-acc --port <first free port> \
+  [--stage-dir <worktree>/stage-4] [--shots <dir>]
 ```
 
 ## Supplied checks
 
-The harness runs the supplied checks of stages 1 to 3 (the stage-2 browser checks through its
+The harness runs the supplied checks of stages 1 to 4 (the stage-2 browser checks through its
 own Playwright) and builds the earlier stages as the previous services:
 
 ```sh
-scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 --stage 3 \
-  --out /Users/Dileepa/dark-factory-v3/.work/checks/s3-<nn>
+scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 --stage 4 \
+  --out /Users/Dileepa/dark-factory-v3/.work/checks/s4-<nn>
 ```
 
 ## Layout
@@ -108,14 +122,14 @@ scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 -
   `src/routes.ts` — the route table; `src/handlers/` — one module per endpoint group
   (`authorizations.ts` for holds, captures and voids; `me.ts` for `GET /me` and its history
   view; `statement.ts` for statements and snapshots; `corrections.ts` for corrections and
-  revisions).
+  revisions; `refunds.ts` for refunds; `batches.ts` for correction batches).
 - `src/state.ts` — the in-memory state, ids, issued timestamps, the service clock, holds,
-  payment revisions and statement snapshots; `src/instant.ts` — the instant grammar and exact
+  payment revisions, refund totals, settlement members and statement snapshots; `src/instant.ts` — the instant grammar and exact
   comparison keys; `src/history.ts` — historical views (revision selection, totals and holds
   at an instant, the historical-overdraft check); `src/time.ts` — RFC 3339 expiry arithmetic;
   `src/context.ts` — the request context, authentication and the instant query parameters;
-  `src/fixture.ts` — reset validation; `src/snapshot.ts` — export (schema 3) and import
-  (schemas 1, 2 and 3); `src/idempotency.ts` — idempotent write paths; `src/ledger.ts` —
+  `src/fixture.ts` — reset validation; `src/snapshot.ts` — export (schema 4) and import
+  (schemas 1 to 4); `src/idempotency.ts` — idempotent write paths; `src/ledger.ts` —
   moving money; `src/passwords.ts` — scrypt hashing and bearer tokens.
 - `src/ui.ts` — the HTML shell, static files and `Accept` negotiation; `ui/index.html` and
   `ui/assets/` — the browser code (`app.js` routing and header, one module per screen,

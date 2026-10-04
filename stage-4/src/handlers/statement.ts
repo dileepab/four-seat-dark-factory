@@ -52,6 +52,7 @@ export function statement(ctx: Ctx): Result {
       knownAt: knownAt?.text ?? null,
       knownKey: knownAt?.key ?? null,
       cutoff: st.seq,
+      form: 4,
     };
     st.snapshots.set(snapshot.token, snapshot);
   }
@@ -78,8 +79,12 @@ export function statementPage(st: State, s: Snapshot, limit: number, offset: num
   entries.forEach((e, i) => {
     balance += e.delta;
     if (i < offset || i >= offset + limit) return;
+    // A snapshot pages its payments in the form of the service that made it (D106): one made by
+    // stage 3 never had refund_of, and its cutoff precedes every refund.
+    const payment: Record<string, unknown> = { ...paymentView(st, e.payment), amount: e.revision.amount };
+    if (s.form === 3) delete payment.refund_of;
     shown.push({
-      payment: { ...paymentView(st, e.payment), amount: e.revision.amount },
+      payment,
       delta: e.delta,
       balance_after: balance,
       revision: e.revision.revision,

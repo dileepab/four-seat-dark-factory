@@ -88,13 +88,13 @@ describe('export schema 3 (W17.1)', () => {
   it('carries revisions, opening balances, snapshots, base and API captures, and correction keys', async () => {
     const w = await populate();
     const { state: s } = await exportFrom(port);
-    assert.equal(s.schema, 3);
+    assert.equal(s.schema, 4, 'stage 4 exports schema 4, a superset of schema 3');
     const users = Object.fromEntries(s.users.map((u: any) => [u.id, u]));
     assert.deepEqual([users.u_ada.opening_balance, users.u_bob.opening_balance, users.u_cy.opening_balance], [9_700, 2_800, 500]);
     const paid = s.payments.find((p: any) => p.id === w.paid.payment_id);
     assert.deepEqual(paid.revisions.map(({ seq, ...r }: any) => r), [
-      { revision: 1, amount: 1_000, effective_at: w.paid.created_at, recorded_at: w.paid.created_at, reason: '' },
-      { revision: 2, amount: 600, effective_at: '2020-06-01T00:00:00Z', recorded_at: w.fix.recorded_at, reason: 'backdated' },
+      { revision: 1, amount: 1_000, effective_at: w.paid.created_at, recorded_at: w.paid.created_at, reason: '', correction_batch_id: null },
+      { revision: 2, amount: 600, effective_at: '2020-06-01T00:00:00Z', recorded_at: w.fix.recorded_at, reason: 'backdated', correction_batch_id: null },
     ]);
     assert.equal(paid.revisions[0].seq, paid.seq);
     assert.ok(paid.revisions[1].seq > paid.seq);
@@ -290,7 +290,7 @@ describe('invalid schema-3 states (W17.4)', () => {
     const snaps = (list: any[]) => ({ ...exported, state: { ...s, snapshots: list } });
     const holdPatch = (patch: (a: any) => any) => ({ ...exported, state: { ...s, authorizations: s.authorizations.map((a: any) => (a.id === w.hold.authorization_id ? patch(a) : a)) } });
     const bad: [string, unknown][] = [
-      ['schema 4', { ...exported, state: { ...s, schema: 4 } }],
+      ['schema 5', { ...exported, state: { ...s, schema: 5 } }],
       ['revision gap', withPayment((p) => ({ ...p, revisions: [r1, { ...r2, revision: 3 }] }))],
       ['no revisions', withPayment((p) => ({ ...p, revisions: [] }))],
       ['revisions missing', withPayment(({ revisions, ...p }) => p)],

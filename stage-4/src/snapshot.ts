@@ -12,8 +12,8 @@ import { instantKey, tsKey } from './instant.ts';
 import {
   addAuthorization, addPayment, addRequest, addUser, AUTHORIZATION_STATUSES, emptyState, formatTs, MAX_AMOUNT,
   MAX_BALANCE, MAX_TTL, REQUEST_STATUSES, sortByTime, VISIBILITIES,
-  type AuthorizationStatus, type PasswordHash, type RequestStatus, type Revision, type Snapshot, type State,
-  type Visibility,
+  type AuthorizationStatus, type PasswordHash, type Payment, type RequestStatus, type Revision, type Snapshot,
+  type State, type Visibility,
 } from './state.ts';
 import { rfc3339Ms } from './time.ts';
 
@@ -22,8 +22,9 @@ export const FORMAT_VERSION = 1;
 // The state layout (D52, D76): 1 is stage 1's (no authorizations), 2 adds the TTL, every
 // authorization and each payment's authorization_id, 3 adds every payment's revisions, each
 // user's opening balance, each authorization's base captured amount and capture payments
-// (D84), and the statement snapshots. Import reads all three.
-const SCHEMA = 3;
+// (D84), and the statement snapshots; 4 adds each payment's refund_of, each revision's
+// correction_batch_id and each snapshot's payment form (D102, D106). Import reads all four.
+const SCHEMA = 4;
 const MAX_REASON = 200;
 const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00$/;
 const DIGEST_RE = /^[0-9a-f]{64}$/;
@@ -50,10 +51,10 @@ export function exportState(st: State): JsonObject {
       payments: st.payments.map((p) => ({
         id: p.id, from_user_id: p.fromUserId, to_user_id: p.toUserId, amount: p.amount, note: p.note,
         visibility: p.visibility, request_id: p.requestId, settlement_id: p.settlementId,
-        authorization_id: p.authorizationId, created_at: p.createdAt, seq: p.seq,
+        authorization_id: p.authorizationId, refund_of: p.refundOf, created_at: p.createdAt, seq: p.seq,
         revisions: p.revisions.map((r) => ({
           revision: r.revision, amount: r.amount, effective_at: r.effectiveAt, recorded_at: r.recordedAt,
-          reason: r.reason, seq: r.seq,
+          reason: r.reason, seq: r.seq, correction_batch_id: r.batchId,
         })),
       })),
       requests: st.requests.map((r) => ({
@@ -80,6 +81,7 @@ export function exportState(st: State): JsonObject {
       operator_ids: [...st.operators],
       snapshots: [...st.snapshots.values()].map((x) => ({
         token: x.token, owner_id: x.ownerId, from: x.from, to: x.to, known_at: x.knownAt, cutoff: x.cutoff,
+        payment_form: x.form,
       })),
       idempotency: [...st.idem.values()].map((r) => ({
         user_id: r.userId, method: r.method, path: r.path, key: r.key, body: r.body, response: r.response,
@@ -133,9 +135,16 @@ function passwordRecord(v: unknown, what: string): PasswordHash {
   return { alg: 'scrypt', N: o.N as number, r: o.r as number, p: o.p as number, salt: o.salt as string, hash: o.hash as string };
 }
 
+// The revisions a schema-4 state records under one correction batch id: one recorded_at, at most
+// one per payment (plan 3.11).
+type Batches = Map<string, { recKey: string; paymentIds: Set<string> }>;
+
 // A schema-3 payment's revisions: 1..n without gaps; revision 1 the payment as made; each
-// later one a correction recorded strictly after the one before (plan 3.11).
-function revisionsOf(p: JsonObject, what: string, see: (seq: unknown, ts: string, what: string) => void): Revision[] {
+// later one a correction recorded strictly after the one before (plan 3.11). From schema 4 a
+// later revision may name the batch that recorded it.
+function revisionsOf(
+  p: JsonObject, what: string, see: (seq: unknown, ts: string, what: string) => void, batches: Batches | null,
+): Revision[] {
   check(Array.isArray(p.revisions) && p.revisions.length > 0, `${what}.revisions must be a non-empty array`);
   const out: Revision[] = [];
   (p.revisions as unknown[]).forEach((r, j) => {
@@ -155,12 +164,25 @@ function revisionsOf(p: JsonObject, what: string, see: (seq: unknown, ts: string
         `${w}.reason must be a string of 1 to ${MAX_REASON} characters`);
       check((recKey as string) > out[j - 1].recKey, `${w}.recorded_at must be later than the revision before`);
     }
+    let batchId: string | null = null;
+    if (batches !== null) {
+      check(o.correction_batch_id === null || (j > 0 && isId(o.correction_batch_id)),
+        `${w}.correction_batch_id must be null${j > 0 ? ' or a batch id' : ' on revision 1'}`);
+      batchId = o.correction_batch_id as string | null;
+      if (batchId !== null) {
+        let batch = batches.get(batchId);
+        if (!batch) batches.set(batchId, (batch = { recKey: recKey as string, paymentIds: new Set() }));
+        check(batch.recKey === recKey, `${w}: the revisions of batch ${batchId} must share one recorded_at`);
+        check(!batch.paymentIds.has(p.id as string), `${w}: a payment has at most one revision of batch ${batchId}`);
+        batch.paymentIds.add(p.id as string);
+      }
+    }
     see(o.seq, o.recorded_at as string, w);
     see(o.seq, o.effective_at as string, w);
     out.push({
       revision: j + 1, amount: o.amount as number, effectiveAt: o.effective_at as string, effKey: effKey as string,
       recordedAt: o.recorded_at as string, recKey: recKey as string, reason: o.reason as string, seq: o.seq as number,
-      batchId: null,
+      batchId,
     });
   });
   return out;
@@ -173,9 +195,10 @@ export function importState(body: JsonObject): State {
   check(body.format_version === FORMAT_VERSION, `format_version must be ${FORMAT_VERSION}`);
   check(isObject(body.state), 'state must be an object');
   const s = body.state as JsonObject;
-  check(s.schema === 1 || s.schema === 2 || s.schema === SCHEMA, 'state.schema must be 1, 2 or 3');
+  check(s.schema === 1 || s.schema === 2 || s.schema === 3 || s.schema === SCHEMA, 'state.schema must be 1, 2, 3 or 4');
   const v2 = s.schema !== 1;
-  const v3 = s.schema === SCHEMA;
+  const v3 = s.schema === 3 || s.schema === 4;
+  const v4 = s.schema === 4;
   check(typeof s.currency === 'string' && /^[A-Z]{3}$/.test(s.currency), 'currency must be three capital letters');
   check(isInt(s.minor_units, 0, 3) && s.minor_units !== 1, 'minor_units must be 0, 2 or 3');
   check(isInt(s.seq, 0, Number.MAX_SAFE_INTEGER), 'seq must be a non-negative integer');
@@ -224,6 +247,10 @@ export function importState(body: JsonObject): State {
     st.tokens.set(t.digest as string, t.user_id as string);
   });
 
+  // Refund links are checked once every payment is in (below): the target must be an earlier
+  // payment, which the list order need not show.
+  const batches: Batches | null = v4 ? new Map() : null;
+  const links: { payment: Payment; target: string; what: string }[] = [];
   list(s, 'payments').forEach((p, i) => {
     const what = `payments[${i}]`;
     check(isId(p.id) && !st.paymentsById.has(p.id), `${what}.id must be a unique id`);
@@ -234,18 +261,42 @@ export function importState(body: JsonObject): State {
     check(typeof p.visibility === 'string' && VISIBILITIES.includes(p.visibility), `${what}.visibility must be public or private`);
     check(isRef(p.request_id) && isRef(p.settlement_id) && (!v2 || isRef(p.authorization_id)),
       `${what} links must be strings or null`);
+    check(!v4 || isRef(p.refund_of), `${what}.refund_of must be a string or null`);
     check(isInstant(p.created_at), `${what}.created_at must be an instant`);
     see(p.seq, p.created_at as string, what);
     // Schemas 1 and 2 get revision 1 from the payment itself (addPayment).
-    const revisions = v3 ? revisionsOf(p, what, see) : undefined;
-    addPayment(st, {
+    const revisions = v3 ? revisionsOf(p, what, see, batches) : undefined;
+    const payment = addPayment(st, {
       id: p.id as string, fromUserId: p.from_user_id as string, toUserId: p.to_user_id as string,
       amount: p.amount as number, note: p.note as string, visibility: p.visibility as Visibility,
       requestId: p.request_id as string | null, settlementId: p.settlement_id as string | null,
       authorizationId: v2 ? p.authorization_id as string | null : null, refundOf: null,
       createdAt: p.created_at as string, seq: p.seq as number, revisions,
     });
+    if (v4 && p.refund_of !== null) links.push({ payment, target: p.refund_of as string, what });
+    // A refund and a capture are immutable: only the payment as made (plan 3.11).
+    check(!v4 || (p.refund_of === null && p.authorization_id === null) || payment.revisions.length === 1,
+      `${what} is a refund or a capture and must have exactly one revision`);
   });
+  // A refund names an earlier payment that is no refund, reverses its parties and links to
+  // nothing else; every payment's refunds add up to at most its latest amount (I69).
+  const refunds = new Set(links.map((l) => l.payment.id));
+  for (const { payment, target: id, what } of links) {
+    const target = st.paymentsById.get(id);
+    check(target !== undefined && target.seq < payment.seq && !refunds.has(id),
+      `${what}.refund_of must name an earlier payment that is not a refund`);
+    check(payment.fromUserId === target!.toUserId && payment.toUserId === target!.fromUserId,
+      `${what} must go from its target's receiver to its target's sender`);
+    check(payment.requestId === null && payment.authorizationId === null && payment.settlementId === null,
+      `${what} is a refund and links to no request, authorization or settlement`);
+    payment.refundOf = id;
+    target!.refunded += payment.amount;
+  }
+  for (const payment of st.payments) {
+    check(payment.refunded <= payment.revisions[payment.revisions.length - 1].amount,
+      `payment ${payment.id}: its refunds exceed its latest amount`);
+  }
+  if (batches !== null) for (const id of batches.keys()) st.batchIds.add(id);
 
   list(s, 'requests').forEach((r, i) => {
     const what = `requests[${i}]`;
@@ -364,10 +415,12 @@ export function importState(body: JsonObject): State {
     check((x.from === null || fromKey !== null) && toKey !== null && (x.known_at === null || knownKey !== null),
       `${what} bounds must be instants (from and known_at may be null)`);
     check(isInt(x.cutoff, 0, Number.MAX_SAFE_INTEGER), `${what}.cutoff must be a non-negative integer`);
+    // A schema-3 snapshot was made by stage 3 and keeps its payment form (D106).
+    check(!v4 || x.payment_form === 3 || x.payment_form === 4, `${what}.payment_form must be 3 or 4`);
     return {
       token: x.token as string, ownerId: x.owner_id as string, from: x.from as string | null, fromKey,
       to: x.to as string, toKey: toKey as string, knownAt: x.known_at as string | null, knownKey,
-      cutoff: x.cutoff as number,
+      cutoff: x.cutoff as number, form: v4 ? x.payment_form as 3 | 4 : 3,
     };
   }) : [];
 

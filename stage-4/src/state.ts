@@ -156,6 +156,7 @@ export interface Snapshot {
   knownAt: string | null; // as given
   knownKey: string | null;
   cutoff: number;
+  form: 3 | 4; // the payment form of the service that made it: 3 has no refund_of (D106)
 }
 
 // A completed idempotent call: the parsed body and the exact response it produced.

@@ -79,7 +79,7 @@ describe('GET /_test/export, schema 2 (W8.1)', () => {
     const snapshot = await exportFrom(port);
     assert.equal(snapshot.format_version, 1);
     const s = snapshot.state;
-    assert.equal(s.schema, 3, 'stage 3 exports schema 3, a superset of schema 2');
+    assert.equal(s.schema, 4, 'stage 4 exports schema 4, a superset of schema 2');
     assert.equal(s.authorization_ttl_seconds, 3600);
     assert.ok(!JSON.stringify(snapshot).includes(PASSWORD));
     const byId = new Map(s.authorizations.map((a: any) => [a.id, a]));
@@ -237,7 +237,7 @@ describe('upgrade from a stage-1 export (W8.3)', () => {
       assert.deepEqual((await c.get('/authorizations')).body, { authorizations: [], has_more: false });
     }
     const imported = await exportFrom(port);
-    assert.equal(imported.state.schema, 3);
+    assert.equal(imported.state.schema, 4);
     assert.equal(imported.state.authorization_ttl_seconds, 600);
     // Through a schema-2 export and import, the stage-1 replay bodies stay verbatim.
     assert.equal((await importInto(second.port, imported)).status, 204);
@@ -284,7 +284,7 @@ describe('upgrade from a stage-1 export (W8.3)', () => {
     const [a0, ...rest] = s.authorizations;
     const withAuth = (patch: Record<string, unknown>) => ({ ...snapshot, state: { ...s, authorizations: [{ ...a0, ...patch }, ...rest] } });
     const bad: [string, unknown][] = [
-      ['schema 4', { ...snapshot, state: { ...s, schema: 4 } }],
+      ['schema 5', { ...snapshot, state: { ...s, schema: 5 } }],
       ['schema "2"', { ...snapshot, state: { ...s, schema: '2' } }],
       ['no TTL', { ...snapshot, state: { ...s, authorization_ttl_seconds: undefined } }],
       ['TTL 0', { ...snapshot, state: { ...s, authorization_ttl_seconds: 0 } }],
