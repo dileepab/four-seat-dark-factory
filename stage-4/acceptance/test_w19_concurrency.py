@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from support import error_code, expect, expect_error, no_failures, tally
+from support import error_code, expect, expect_error, instant, no_failures, tally
 
 pytestmark = pytest.mark.item(19)
 
@@ -28,6 +28,22 @@ def test_fifty_refunds_of_one_payment_never_pass_the_cap(world):
     assert world.ada.money() == (9_990, 9_990, 0) and world.bob.money() == (2_510, 2_510, 0)
     mine = [x for x in world.bob.feed() if x["refund_of"] == p["payment_id"]]
     assert {x["payment_id"] for x in mine} == ids
+
+
+def test_twenty_refunds_at_once_each_get_their_own_created_at(world):
+    """PLAN 3.9 refund step 13 (one issued created_at; stage-3 3.5: two writes never share a created_at): 20 refunds of
+    20 payments committed at once have 20 distinct created_at values, each later than its target's."""
+    ps = [expect(world.ada.pay("bob", 10), 201) for _ in range(20)]
+    clients = [world.svc.fresh_client("bob") for _ in range(20)]
+    out = world.svc.burst(lambda i: clients[i].refund(ps[i]["payment_id"], 1 + i % 10), 20)
+    no_failures(out)
+    assert tally(out) == {201: 20}, tally(out)
+    rs = [r.json() for r in out]
+    for p, r in zip(ps, rs):
+        assert r["refund_of"] == p["payment_id"] and instant(r["created_at"]) > instant(p["created_at"])
+    created = [instant(r["created_at"]) for r in rs]
+    assert len(set(created)) == 20, f"refunds share a created_at: {sorted(r['created_at'] for r in rs)}"
+    assert len(set(created) | {instant(p["created_at"]) for p in ps}) == 40, "an issued timestamp is shared"
 
 
 def test_refunds_racing_a_correction_that_lowers_the_amount(world):

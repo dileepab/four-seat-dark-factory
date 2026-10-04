@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from support import batch_item as item, error_code, expect, expect_error, no_failures, page_snapshot, read_statement, tally
+from support import (batch_item as item, error_code, expect, expect_error, instant, no_failures, page_snapshot,
+                     read_statement, tally)
 from test_w19_refunds import uid
 
 pytestmark = pytest.mark.item(20)
@@ -30,6 +31,24 @@ def test_batches_and_single_corrections_on_one_revision_have_one_winner(world):
     revs = world.ada.revisions(pid)
     assert [r["revision"] for r in revs] == [1, 2]
     assert world.ada.balance() == 10_000 - revs[1]["amount"] and world.bob.balance() == 2_500 + revs[1]["amount"]
+
+
+def test_twenty_batches_at_once_each_get_their_own_recorded_at(world):
+    """D100, D67 (stage-3 3.5: two writes never share a created_at or recorded_at): 20 batches committed at once have
+    20 distinct issued recorded_at values, each later than its payment's created_at (critic's W20 review, BR06)."""
+    ps = [expect(world.ada.pay("bob", 10 + i), 201) for i in range(20)]
+    clients = [world.svc.fresh_client("ada") for _ in range(20)]
+    out = world.svc.burst(lambda i: clients[i].batch([item(ps[i], 1, 1 + i)]), 20)
+    no_failures(out)
+    assert tally(out) == {201: 20}, tally(out)
+    bs = [r.json() for r in out]
+    for p, b in zip(ps, bs):
+        assert instant(b["recorded_at"]) > instant(p["created_at"]), "D100"
+        assert [r["recorded_at"] for r in b["revisions"]] == [b["recorded_at"]]
+    recorded = [instant(b["recorded_at"]) for b in bs]
+    assert len(set(recorded)) == 20, f"batches share a recorded_at: {sorted(b['recorded_at'] for b in bs)}"
+    assert len(set(recorded) | {instant(p["created_at"]) for p in ps}) == 40, "an issued timestamp is shared"
+    assert world.bob.balance() == 2_500 + 20 * 1 + sum(range(20))
 
 
 def test_two_overlapping_batches_have_one_winner(world):
