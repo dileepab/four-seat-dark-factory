@@ -8,12 +8,12 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | HANDED_OFF | 99d2431 |
-| W2 | builder | Idempotency engine, payments, activity feed | BUILDING | — |
+| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | HANDED_OFF; follow-up for D33-D35 in progress | 99d2431 |
+| W2 | builder | Idempotency engine, payments, activity feed | HANDED_OFF | 1bd9c8d |
 | W3 | builder | Requests and splits | PLANNED | — |
 | W4 | builder | Settlements | PLANNED | — |
 | W5 | builder | Export and import | PLANNED | — |
-| W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | BUILDING | — |
+| W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | BUILDING (W1 part committed) | 16f24a6 |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
 
@@ -361,3 +361,4 @@ Filled in once W6 is committed: each normative line of stage-1.md, the test that
 | Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic (plan review), verifier (W6), builder (W1), all by 06:40Z | acknowledged |
 | HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
 | Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) and verdict scope (section 0) | builder, verifier, critic | 06:53Z | — | sent |
+| HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | — | awaiting verifier run |
