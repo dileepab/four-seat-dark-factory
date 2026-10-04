@@ -12,7 +12,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d, suite 026f116); awaiting critic | 2455a8d |
 | W4 | builder | Settlements | VERIFIED (PASS @ e143cf1, suite 026f116); awaiting critic | e143cf1 |
-| W5 | builder | Export and import | BUILDING (committed 295378c, not handed off) | — |
+| W5 | builder | Export and import | HANDED_OFF | 295378c |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
@@ -349,6 +349,7 @@ Specification: all of stage 1. Invariants: all.
 - **D33 Undecodable paths.** 404 `not_found`: no resource has that name, and §5 forbids a 5xx. (Critic plan review.)
 - **D34 Fixture settlement membership.** Fixture payments accept `settlement_id`, because §11 says a reset must preserve settlement membership; without it a seeded member would read back as `null`. (Critic plan review.)
 - **D35 Keep-alive.** Server idle timeout above the client pool's 5 s, so I11's "no dropped connection" holds for reused connections. (Critic plan review.)
+- **D36 Stored request bodies (W5 gap, accepted).** Idempotency records keep the parsed body, so a state holding more than about 64 MiB of stored bodies would export but exceed the 64 MiB import limit. Accepted as is: notes are capped at 200 characters, no specified flow stores large bodies, and raising the import limit would risk the 2 GiB memory limit while parsing.
 
 ## 6. Specification trace
 
@@ -465,3 +466,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (M49), verifier test ee19494, critic APPROVED W1+W2 (REVIEW.md 493fc0c); verifier PASS W1+W2 07:03Z | ACCEPTED |
 | HANDOFF W3 @ 2455a8d (builder) | verifier, critic | 07:29Z | verifier PASS 07:33Z | awaiting critic |
 | HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z | awaiting critic |
+| HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | — | awaiting verifier run |
