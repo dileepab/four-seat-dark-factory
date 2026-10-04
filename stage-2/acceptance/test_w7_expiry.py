@@ -160,6 +160,13 @@ def test_failed_captures_claim_no_key(short):
     assert ada.money() == (9_700, 9_700, 0)
 
 
+def _in_offset(dt: datetime, hours: int) -> str:
+    tz = timezone(timedelta(hours=hours))
+    local = dt.astimezone(tz)
+    sign = "+" if hours >= 0 else "-"
+    return local.strftime("%Y-%m-%dT%H:%M:%S") + f"{sign}{abs(hours):02d}:00"
+
+
 def test_seeded_expires_at_is_compared_as_an_instant(svc):
     """D48: a past instant written in +14:00 reads later than now as text; a future one in -12:00 reads earlier."""
     now = datetime.now(timezone.utc)

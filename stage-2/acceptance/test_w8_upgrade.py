@@ -65,8 +65,8 @@ def test_stage_1_replays_return_the_stored_bodies_unchanged(prev, svc):
     for rp in rich["replays"]:
         r = svc.client(rp["who"]).post(rp["path"], json=rp["body"], key=rp["key"])
         assert expect(r, 200) == rp["resp"], rp["path"]
-        if "payment_id" in rp["resp"]:
-            assert set(rp["resp"]) == STAGE1_PAYMENT_KEYS
+        if rp["path"] == "/payments" or rp["path"].endswith("/pay"):
+            assert set(rp["resp"]) == STAGE1_PAYMENT_KEYS, rp["resp"]
     after = observe(svc, rich["handles"])
     assert {h: v["me"]["balance"] for h, v in after.items()} == \
         {h: v["me"]["balance"] for h, v in rich["before"].items()}, "a replay moved money"

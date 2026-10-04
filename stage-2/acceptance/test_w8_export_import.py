@@ -234,17 +234,18 @@ def test_export_during_a_burst_of_holds_is_one_snapshot(svc, svc_b):
 
 # ---------------------------------------------------------------- W8.4 rejected imports
 
-def _record_holding(node, value):
+def _record_holding_all(node, values):
+    """The innermost object that holds every one of `values` as field values (type-exact)."""
     if isinstance(node, dict):
         for v in node.values():
-            found = _record_holding(v, value)
+            found = _record_holding_all(v, values)
             if found is not None:
                 return found
-        if value in node.values():
+        if all(any(type(x) is type(want) and x == want for x in node.values()) for want in values):
             return node
     elif isinstance(node, list):
         for v in node:
-            found = _record_holding(v, value)
+            found = _record_holding_all(v, values)
             if found is not None:
                 return found
     return None
@@ -283,8 +284,9 @@ def corrupt(snap: Snapshot, how: str, api_view: dict):
     if how == "schema missing":
         state.pop("schema")
         return body
-    rec = _record_holding(state, SENTINEL_NOTE)
-    assert rec is not None, "no record holds the sentinel note; this probe cannot run"
+    # The capture payment copies the note, so the authorization is the record with the note and the amount.
+    rec = _record_holding_all(state, (SENTINEL_NOTE, SENTINEL_AMOUNT))
+    assert rec is not None, "no record holds the sentinel note and amount; this probe cannot run"
     if how == "unknown status":
         _swap(rec, "open", "frozen")
     elif how == "captured above amount":
