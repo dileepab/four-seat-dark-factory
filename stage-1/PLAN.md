@@ -8,8 +8,8 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | BUILDING | — |
-| W2 | builder | Idempotency engine, payments, activity feed | PLANNED | — |
+| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | HANDED_OFF | 99d2431 |
+| W2 | builder | Idempotency engine, payments, activity feed | BUILDING | — |
 | W3 | builder | Requests and splits | PLANNED | — |
 | W4 | builder | Settlements | PLANNED | — |
 | W5 | builder | Export and import | PLANNED | — |
@@ -343,6 +343,8 @@ Specification: all of stage 1. Invariants: all.
 - **D29 Initial state.** Empty, EUR with 2 minor units, until the first reset.
 - **D30 Token storage.** SHA-256 hashes of tokens in state and export; the bearer value itself is never stored.
 - **D31 Payment note when paying a request.** Copied from the request, as are the amount and the parties; the visibility comes from the payer's body.
+- **D32 Login timing.** An unknown-email login may answer faster than a wrong-password one: the specification asks for 401 in both cases, not for equal timing, and a dummy hash would add CPU to every bad login.
+- **D22 measured (W1, 99d2431).** A 1000-user reset with 1000 distinct passwords at N=2^12 answers 204 in 6.1 s under `--cpus 2 --memory 2g`; kept, since only our own 1000-user envelope comes near the 10 s budget.
 
 ## 6. Specification trace
 
@@ -353,3 +355,4 @@ Filled in once W6 is committed: each normative line of stage-1.md, the test that
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
 | Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic (plan review), verifier (W6), builder (W1), all by 06:40Z | acknowledged |
+| HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
