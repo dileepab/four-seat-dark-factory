@@ -11,7 +11,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d); BLOCKED by critic (missing test, R29: 2^53 guard on pay) | 2455a8d |
-| W4 | builder | Settlements | VERIFIED (PASS @ e143cf1, suite 026f116); awaiting critic | e143cf1 |
+| W4 | builder | Settlements | VERIFIED (PASS @ e143cf1); BLOCKED by critic (S18: non-object entry order, D37 fix owed by builder) | e143cf1 |
 | W5 | builder | Export and import | VERIFIED (PASS @ 295378c, suite 026f116); awaiting critic | 295378c |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
@@ -206,7 +206,7 @@ Password hashing (D22): scrypt with a 16-byte random salt per account and the pa
 `POST /settlements` (idempotent, operators only):
 
 - 401 without a valid token; 403 `forbidden` if the caller is not in `settlement_operator_ids`, checked before the key and the body.
-- 422 if `transfers` is missing, not an array, empty, longer than 32, or holds an entry that is not an object.
+- 422 if `transfers` is missing, not an array, empty, longer than 32, or holds an entry that is not an object. This batch-shape check covers every entry and runs before any entry is examined, so `[{"from_handle": "nobody", ...}, 7]` is 422 `validation_failed`, not 404 (D37).
 - Then each entry in input order; the first entry with any error decides the answer. Within an entry: `from_handle` and `to_handle` present and strings, `amount`, `note`, `visibility` by the payment rules (422); unknown `from_handle`, then unknown `to_handle` (404); `from_handle` equal to `to_handle` (422 `self_payment`).
 - Affordable when, for every wallet, balance + incoming − outgoing ≥ 0; otherwise 409 `insufficient_funds`. Then the 2^53 guard (422).
 - One atomic step: one Payment per transfer, with the new `settlement_id`, `request_id: null` and `created_at` equal to `committed_at`; balances move by their net amounts.
@@ -287,7 +287,7 @@ Specification: §4 (requests), §8 request endpoints and `POST /splits`, §9. In
 Specification: §11. Invariants: I1, I2, I15–I19, I22, I23, I24.
 
 - W4.1 Permission comes from `settlement_operator_ids` in the fixture; no token is 401; a non-operator is 403 even without a key or with a bad body.
-- W4.2 Validation per section 3.10: batch shape 422; 1 to 32 entries; entry errors decided in input order, each before any funds check.
+- W4.2 Validation per section 3.10: batch shape 422, including a non-object entry anywhere in the batch even after an entry with a 404 or `self_payment` error; 1 to 32 entries; entry errors decided in input order, each before any funds check.
 - W4.3 Net affordability: a chain through a wallet that starts at 0 succeeds; any wallet ending below zero gives 409 and nothing changes.
 - W4.4 Response in input order; members carry `settlement_id`, `request_id: null`, `created_at` equal to `committed_at`; ordinary payments carry `settlement_id: null`; members appear in feeds by the ordinary rule, so a private member between two other users is hidden from the operator's feed.
 - W4.5 Replay returns 200 with the complete original; a failed settlement leaves its key unclaimed; concurrent settlements and payments stay conserved and non-negative.
@@ -350,6 +350,7 @@ Specification: all of stage 1. Invariants: all.
 - **D34 Fixture settlement membership.** Fixture payments accept `settlement_id`, because §11 says a reset must preserve settlement membership; without it a seeded member would read back as `null`. (Critic plan review.)
 - **D35 Keep-alive.** Server idle timeout above the client pool's 5 s, so I11's "no dropped connection" holds for reused connections. (Critic plan review.)
 - **D36 Stored request bodies (W5 gap, accepted).** Idempotency records keep the parsed body, so a state holding more than about 64 MiB of stored bodies would export but exceed the 64 MiB import limit. Accepted as is: notes are capped at 200 characters, no specified flow stores large bodies, and raising the import limit would risk the 2 GiB memory limit while parsing.
+- **D37 Non-object settlement entries.** Batch shape, checked for the whole batch before the entry loop: §11 defines the batch as "1..32 objects" and says "malformed batch shape is 422"; per-entry input order applies to entry errors (field rules, unknown handle, self-transfer) within well-formed entries. (Critic W4 review, S18; this is plan 3.10's existing text, now pinned by a test.)
 
 ## 6. Specification trace
 
@@ -465,6 +466,6 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | verified and approved at 2ffcbe8 instead (1bd9c8d lacks D34/D35) | ACCEPTED |
 | HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (M49), verifier test ee19494, critic APPROVED W1+W2 (REVIEW.md 493fc0c); verifier PASS W1+W2 07:03Z | ACCEPTED |
 | HANDOFF W3 @ 2455a8d (builder) | verifier, critic | 07:29Z | verifier PASS 07:33Z; critic BLOCKED 07:56Z (R29, test owed by verifier) | blocked |
-| HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z | awaiting critic |
+| HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z; critic BLOCKED 08:00Z (S18; planner chose plan 3.10 order, D37) | blocked |
 | HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | verifier PASS 07:54Z; final check (isolated, main repo @ 720e1c5) claimed stage 1 | awaiting critic |
 | Liveness resend to critic: W3, W4, W5 reviews (no acknowledgement for 20 min) | critic | 07:50Z | critic 07:53Z: all three started; W3 and W4 each have a finding | acknowledged |
