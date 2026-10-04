@@ -6,6 +6,7 @@ import {
   captureAuthorization, createAuthorization, listAuthorizations, voidAuthorization,
 } from './handlers/authorizations.ts';
 import { me } from './handlers/me.ts';
+import { statement } from './handlers/statement.ts';
 import { activity, createPayment } from './handlers/payments.ts';
 import { cancelRequest, createRequest, declineRequest, listRequests, payRequest } from './handlers/requests.ts';
 import { createSettlement } from './handlers/settlements.ts';
@@ -27,6 +28,7 @@ const ROUTES: Route[] = [
   { method: 'POST', path: '/auth/signup', handler: signup },
   { method: 'POST', path: '/auth/login', handler: login },
   { method: 'GET', path: '/me', handler: me },
+  { method: 'GET', path: '/statement', handler: statement },
   { method: 'POST', path: '/payments', handler: createPayment },
   { method: 'GET', path: '/activity', handler: activity },
   { method: 'POST', path: '/requests', handler: createRequest },

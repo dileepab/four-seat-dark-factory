@@ -139,6 +139,21 @@ export interface Authorization {
 
 export type NewAuthorization = Omit<Authorization, 'expiresKey' | 'createdKey' | 'closedKey'>;
 
+// A statement's frozen result (plan 3.9, D73): its owner, window, known_at and the creation
+// sequence at its first read. Revisions are only appended, so recomputing the view gives the
+// same entries and balances at any later time; no entries are stored.
+export interface Snapshot {
+  token: string;
+  ownerId: string;
+  from: string | null; // as given; null for the wallet's opening
+  fromKey: string | null;
+  to: string; // as given, or the defaulted instant (the read's now plus a millisecond)
+  toKey: string;
+  knownAt: string | null; // as given
+  knownKey: string | null;
+  cutoff: number;
+}
+
 // A completed idempotent call: the parsed body and the exact response it produced.
 export interface IdemRecord {
   userId: string;
@@ -171,6 +186,7 @@ export interface State {
   paymentsOf: Map<string, Payment[]>; // user id -> the payments they sent or received
   capturesOf: Map<string, Payment[]>; // authorization id -> the payments linked to it
   authorizationsOf: Map<string, Authorization[]>; // payer id -> their authorizations
+  snapshots: Map<string, Snapshot>; // statement token -> its frozen view
   seq: number; // creation counter, the tie-break for equal timestamps
   lastTs: string; // the latest timestamp issued
 }
@@ -198,6 +214,7 @@ export function emptyState(): State {
     paymentsOf: new Map(),
     capturesOf: new Map(),
     authorizationsOf: new Map(),
+    snapshots: new Map(),
     seq: 0,
     lastTs: formatTs(Date.now()),
   };
