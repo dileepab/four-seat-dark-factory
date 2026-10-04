@@ -119,15 +119,22 @@ def test_two_hundred_handles_preview(svc, ui):
     expect(ui.el("split-share-p198")).to_have_text(money(1))
 
 
-def test_lost_split_response_is_uncertain_and_retry_creates_one(world, ui):
+@pytest.mark.parametrize("how", ["abort-after", "empty-after"])
+def test_lost_split_response_is_uncertain_and_retry_creates_one(world, ui, how):
+    """W11.2, W10.3 (plan d29e313: an empty 201 after commit is unknown too)."""
     open_split(ui)
-    ui.fault("/splits", "POST", "abort-after")
+    ui.fault("/splits", "POST", how)
     fill_split(ui, "3.00", "ada,bob")
     ui.click("split-submit")
     expect(ui.el("split-uncertain")).to_be_visible()
     ui.absent("split-error")
-    ui.shot("split", "uncertain")
+    ui.absent("split-success")
+    if how == "abort-after":
+        ui.shot("split", "uncertain")
     ui.click("split-submit")
     expect(ui.el("split-success")).to_be_visible()
     ui.absent("split-uncertain")
     assert len(world.bob.requests()) == 1
+    sent = ui.writes("/splits")
+    assert len(sent) == 2 and sent[0].key == sent[1].key and sent[0].body == sent[1].body
+    assert not ui.page_errors, f"uncaught errors in the page: {ui.page_errors}"

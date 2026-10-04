@@ -86,8 +86,10 @@ class UI:
         self.calls: list[Recorded] = []
         self.all_urls: list[str] = []
         self.dialogs: list[str] = []
+        self.page_errors: list[str] = []
         page.on("request", self._record)
         page.on("dialog", self._dialog)
+        page.on("pageerror", lambda e: self.page_errors.append(str(e)))
 
     def _dialog(self, dialog) -> None:
         self.dialogs.append(dialog.message)
@@ -184,18 +186,22 @@ class UI:
         self.page.route("**/*", handler)
         return held
 
-    def fault(self, path_re: str, method: str, how: str, *, count: int = 1) -> list:
-        """Break the next `count` matching requests.
+    def fault(self, path_re: str, method: str, how: str, *, count: int = 1, query: str | None = None) -> list:
+        """Break the next `count` matching requests (with `query`, only those whose query string matches it).
 
         how: "abort-before" (the server never sees it), "abort-after" (the server commits, the
         response is lost), "503" (no commit, a 5xx), "500-after" (commit, then a 5xx), "html-after"
-        (commit, then a 2xx body that is not JSON).
+        (commit, then a 2xx body that is not JSON), "empty-after" (commit, then a 2xx with an empty
+        body: 201 for a POST, 200 otherwise), "null-after" (commit, then a 2xx whose JSON body is not
+        an object), "429-bare-after" (commit, then a 429 whose JSON body has no error envelope).
         """
         done: list = []
 
         def handler(route: Route) -> None:
             req = route.request
-            if req.method != method or not re.fullmatch(path_re, urlsplit(req.url).path) or len(done) >= count:
+            url = urlsplit(req.url)
+            if req.method != method or not re.fullmatch(path_re, url.path) or len(done) >= count or \
+                    (query is not None and not re.search(query, url.query)):
                 route.fallback()
                 return
             done.append(req.url)
@@ -213,11 +219,33 @@ class UI:
             elif how == "html-after":
                 route.fetch()
                 route.fulfill(status=201, content_type="text/html", body="<html>proxy page</html>")
+            elif how == "empty-after":
+                route.fetch()
+                route.fulfill(status=201 if method == "POST" else 200, content_type="application/json", body="")
+            elif how == "null-after":
+                route.fetch()
+                route.fulfill(status=201 if method == "POST" else 200, content_type="application/json", body="null")
+            elif how == "429-bare-after":
+                route.fetch()
+                route.fulfill(status=429, content_type="application/json", body='{"message": "Too many requests"}')
             else:
                 raise AssertionError(how)
 
         self.page.route("**/*", handler)
         return done
+
+    def watch_for(self, testid: str) -> None:
+        """From now on, record in the page whether an element with this test id ever appears."""
+        self.page.evaluate("""id => {
+          window.__seen = window.__seen || {};
+          window.__seen[id] = false;
+          const look = () => { if (document.querySelector(`[data-testid="${id}"]`)) window.__seen[id] = true; };
+          look();
+          new MutationObserver(look).observe(document.documentElement, {subtree: true, childList: true, attributes: true});
+        }""", testid)
+
+    def ever_seen(self, testid: str) -> bool:
+        return bool(self.page.evaluate("id => !!(window.__seen && window.__seen[id])", testid))
 
     # -- screenshots (W12.4)
     def shot(self, screen: str, state: str) -> None:

@@ -10,7 +10,7 @@ import pytest
 from playwright.sync_api import expect
 
 from support import expect as expect_status
-from support import fixture, seeded_auth, standard_users
+from support import fixture, seeded_auth, standard_users, user
 
 pytestmark = pytest.mark.item(11)
 
@@ -184,3 +184,32 @@ def test_authorizations_states(world, ui):
     ui.click(f"authorization-capture-{a}")
     expect(ui.el(f"authorization-item-{a}")).to_have_attribute("data-status", "captured")
     state(ui, "authorizations", "capture-success")
+
+
+LONG_A, LONG_B = "w" * 20, "m" * 20                 # the longest handles (20 code points)
+LONG_NOTE = "W" * 200                                # the longest note, with no break opportunity
+
+
+@pytest.mark.parametrize("page", ["w375"], indirect=True)
+def test_the_longest_names_handles_and_notes_pass_the_layout_checks_at_375(svc, ui):
+    """W11.4, I46 (plan d29e313; critic U40): a 200-character note without spaces, 100-character display names
+    and 20-character handles on every screen."""
+    users = [user(LONG_A, 10 ** 12, display_name="W" * 100), user(LONG_B, 10 ** 12, display_name="M" * 100)]
+    pays = [{"id": "p_1", "from_user_id": f"u_{LONG_B}", "to_user_id": f"u_{LONG_A}", "amount": 123_456_789,
+             "note": LONG_NOTE},
+            {"id": "p_2", "from_user_id": f"u_{LONG_A}", "to_user_id": f"u_{LONG_B}", "amount": 1, "note": LONG_NOTE,
+             "visibility": "private"}]
+    reqs = [{"id": "rq_1", "requester_id": f"u_{LONG_B}", "payer_id": f"u_{LONG_A}", "amount": 999_999_999,
+             "note": LONG_NOTE, "status": "pending"},
+            {"id": "rq_2", "requester_id": f"u_{LONG_A}", "payer_id": f"u_{LONG_B}", "amount": 5, "note": LONG_NOTE,
+             "status": "pending"}]
+    auths = [seeded_auth("a_1", LONG_B, LONG_A, 999_999_999, note=LONG_NOTE),
+             seeded_auth("a_2", LONG_A, LONG_B, 7, note=LONG_NOTE)]
+    svc.must_reset(fixture(users, payments=pays, requests=reqs, authorizations=auths))
+    ui.log_in(LONG_A)
+    for route, anchor in (("/", "activity-item-p_1"), ("/requests", "request-item-rq_1"),
+                          ("/authorizations", "authorization-item-a_1"), ("/split", "split-submit")):
+        ui.goto(route, anchor)
+        expect(ui.el("current-user")).to_be_visible()
+        ui.page.wait_for_timeout(200)
+        ui.check_layout(f"{route} with the longest names, handles and notes")

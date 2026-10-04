@@ -99,3 +99,62 @@ def test_expiry_text_stays_on_one_line_at_375(svc, ui):
         assert not got["clipped"], f"authorization-expires-{aid} is cut off by {got['clipped']}"
     sw, iw = ui.page.evaluate("() => [document.documentElement.scrollWidth, window.innerWidth]")
     assert sw <= iw, f"horizontal scroll at 375 on /authorizations: scrollWidth {sw} > innerWidth {iw}"
+
+
+LONGEST_EXPIRY = "2099-06-15T10:20:30." + "1" * 38 + "+05:30"    # 64 characters, the most a fixture allows
+
+# The element's own box, its line height and the box of the authorization item (its card) around it.
+BOX_JS = """el => {
+  const s = getComputedStyle(el);
+  const lh = s.lineHeight === 'normal' ? 1.2 * parseFloat(s.fontSize) : parseFloat(s.lineHeight);
+  const b = el.getBoundingClientRect();
+  const card = el.closest('[data-testid^="authorization-item-"]');
+  const c = card ? card.getBoundingClientRect() : null;
+  return {height: b.height, lineHeight: lh, left: b.left, right: b.right,
+          card: c && {left: c.left, right: c.right}};
+}"""
+
+# The text of every label of a form control: <label for>, a wrapping <label>, aria-labelledby and aria-label.
+LABEL_JS = """el => {
+  const parts = [...(el.labels || [])].map(l => l.textContent);
+  for (const id of (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean)) {
+    const t = document.getElementById(id);
+    if (t) parts.push(t.textContent);
+  }
+  if (el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label'));
+  return parts.join(' ').replace(/\\s+/g, ' ').trim();
+}"""
+
+
+@pytest.mark.parametrize("page", ["w375"], indirect=True)
+def test_a_64_character_expiry_stays_on_one_line_inside_its_card_at_375(svc, ui):
+    """W13.2 at its boundary (plan d29e313; critic W13b): one line (height within 1.5 line heights), inside
+    its card, with no horizontal page scroll."""
+    assert len(LONGEST_EXPIRY) == 64
+    svc.must_reset(fixture(standard_users(), authorizations=[
+        seeded_auth("a_max", "bob", "ada", 450, expires_at=LONGEST_EXPIRY)]))
+    ui.log_in("ada", route="/authorizations")
+    expect(ui.el("authorization-expires-a_max")).to_have_text(LONGEST_EXPIRY)
+    lines = ui.page.eval_on_selector(sel("authorization-expires-a_max"), LINES_JS)
+    assert lines["lines"] == 1, f"the 64-character expiry takes {lines['lines']} lines at 375"
+    box = ui.page.eval_on_selector(sel("authorization-expires-a_max"), BOX_JS)
+    assert box["height"] <= 1.5 * box["lineHeight"], \
+        f"the expiry box is {box['height']:.1f} px high, more than 1.5 line heights of {box['lineHeight']:.1f} px"
+    assert box["card"] is not None, "authorization-expires-a_max is not inside authorization-item-a_max"
+    assert box["card"]["left"] - 1 <= box["left"] and box["right"] <= box["card"]["right"] + 1, \
+        f"the expiry box {box['left']:.1f}..{box['right']:.1f} leaves its card {box['card']}"
+    sw, iw = ui.page.evaluate("() => [document.documentElement.scrollWidth, window.innerWidth]")
+    assert sw <= iw, f"horizontal scroll at 375 on /authorizations: scrollWidth {sw} > innerWidth {iw}"
+
+
+def test_the_capture_button_names_the_action_of_its_input_label(svc, ui):
+    """W13.3 (plan d29e313; critic W13c): the capture button's text appears in the label of
+    authorization-capture-amount-{id}, ignoring case."""
+    svc.must_reset(fixture(standard_users(), authorizations=[seeded_auth("a_in", "bob", "ada", 450)]))
+    ui.log_in("ada", route="/authorizations")
+    expect(ui.el("authorization-capture-amount-a_in")).to_have_value("4.50")
+    label = ui.page.eval_on_selector(sel("authorization-capture-amount-a_in"), LABEL_JS)
+    button = " ".join(ui.el("authorization-capture-a_in").inner_text().split())
+    assert label, "authorization-capture-amount-a_in has no label"
+    assert button, "authorization-capture-a_in has no text"
+    assert button.lower() in label.lower(), f"the button says {button!r}; the input's label is {label!r}"

@@ -2,6 +2,8 @@
 uncertain outcomes", "Existing clients after an upgrade"; PLAN 3.14 writes, D42, D43). I41, I42, I43, I47."""
 from __future__ import annotations
 
+import time
+
 import pytest
 from playwright.sync_api import expect
 
@@ -23,8 +25,11 @@ def payments_with_note(client, note):
 
 
 @pytest.mark.parametrize("how,committed", [("abort-after", True), ("abort-before", False), ("503", False),
-                                           ("500-after", True), ("html-after", True)])
+                                           ("500-after", True), ("html-after", True), ("empty-after", True),
+                                           ("null-after", True), ("429-bare-after", True)])
 def test_lost_payment_shows_pay_uncertain_and_an_unchanged_retry_pays_once(world, ui, how, committed):
+    """W10.3 (plan d29e313): a network failure, a 5xx, a 4xx without the envelope (critic U04) and a 2xx whose
+    body is not a JSON object, an empty one included (critic reason 1), are unknown outcomes."""
     open_wallet(ui)
     ui.fault("/payments", "POST", how)
     ui.pay_form("bob", "15.00", note=f"lost {how}")
@@ -49,17 +54,23 @@ def test_lost_payment_shows_pay_uncertain_and_an_unchanged_retry_pays_once(world
     found = payments_with_note(world.ada, f"lost {how}")
     assert len(found) == 1, "the money moved exactly once"
     expect(ui.el(f"activity-item-{found[0]['payment_id']}")).to_be_visible()
+    assert not ui.page_errors, f"uncaught errors in the page: {ui.page_errors}"
 
 
 def test_response_held_past_four_seconds_is_uncertain_and_the_late_answer_is_ignored(world, ui):
-    """D43 (plan 45fe2dc): at 4 s the page aborts the request, shows pay-uncertain and re-enables pay-submit."""
+    """D43 (plan 45fe2dc, d29e313): at 4 s the page aborts the request, shows pay-uncertain within 4.7 s of the
+    click (critic U02) and re-enables pay-submit; not before the limit (critic U01)."""
     open_wallet(ui)
     held = ui.hold("/payments", "POST", fetch_first=True, count=1)
     ui.pay_form("bob", "15.00", note="slow")
+    clicked = time.monotonic()
     ui.click("pay-submit")
     ui.page.wait_for_timeout(2_500)
     ui.absent("pay-error")
-    expect(ui.el("pay-uncertain")).to_be_visible(timeout=3_500)
+    ui.absent("pay-uncertain")                        # 2.5 s: the limit has not been reached
+    left_ms = (4.7 - (time.monotonic() - clicked)) * 1_000
+    expect(ui.el("pay-uncertain")).to_be_visible(timeout=max(1.0, left_ms))
+    assert time.monotonic() - clicked <= 4.7, f"pay-uncertain showed {time.monotonic() - clicked:.2f} s after the click"
     expect(ui.el("pay-submit")).to_be_enabled()
     held.release()                                    # the late answer must change nothing on the page
     ui.page.wait_for_timeout(800)
@@ -75,6 +86,22 @@ def test_response_held_past_four_seconds_is_uncertain_and_the_late_answer_is_ign
     assert len(sent) == 2 and sent[0].key == sent[1].key and sent[0].body == sent[1].body
 
 
+def test_an_answer_held_2_8_seconds_is_success_with_no_uncertain_at_any_point(world, ui):
+    """W10.3, D43 (critic U01): only no answer within 4 s is unknown; a slow answer inside the limit is success."""
+    open_wallet(ui)
+    held = ui.hold("/payments", "POST", fetch_first=True, count=1)
+    ui.pay_form("bob", "15.00", note="slow but fine")
+    ui.watch_for("pay-uncertain")
+    clicked = time.monotonic()
+    ui.click("pay-submit")
+    ui.page.wait_for_timeout(max(0, 2_800 - (time.monotonic() - clicked) * 1_000))
+    held.release()
+    expect(ui.el("pay-success")).to_be_visible()
+    assert not ui.ever_seen("pay-uncertain"), "pay-uncertain showed although the answer came inside 4 s"
+    ui.absent("pay-error")
+    ui.wallet(8_500)
+    assert len(payments_with_note(world.ada, "slow but fine")) == 1
+
 def test_a_load_held_past_four_seconds_ends_in_load_error(world, ui):
     ui.log_in("ada")
     held = ui.hold("/activity", "GET", fetch_first=True)
@@ -86,6 +113,20 @@ def test_a_load_held_past_four_seconds_ends_in_load_error(world, ui):
     ui.click("load-retry")
     ui.absent("load-error")
     expect(ui.el("empty-activity")).to_be_visible()
+
+
+@pytest.mark.parametrize("how", ["empty-after", "null-after"])
+def test_a_load_answered_without_a_json_object_ends_in_load_error(world, ui, how):
+    """3.14 Outcomes (plan d29e313): a load answered 2xx with an empty or non-object body is a failed load."""
+    ui.log_in("ada")
+    ui.fault("/me", "GET", how, count=50)       # every read of /me until the retry
+    ui.page.goto("/")
+    expect(ui.el("load-error")).to_be_visible()
+    assert not ui.page_errors, f"uncaught errors in the page: {ui.page_errors}"
+    ui.page.unroute_all(behavior="ignoreErrors")
+    ui.click("load-retry")
+    ui.absent("load-error")
+    ui.wallet(10_000)
 
 
 def test_uncertain_then_refused_retry_shows_pay_error_and_keeps_the_form(world, ui):
@@ -103,9 +144,10 @@ def test_uncertain_then_refused_retry_shows_pay_error_and_keeps_the_form(world, 
     assert ui.el("pay-note").input_value() == "maybe"
 
 
-def test_request_form_lost_response_is_uncertain_and_retry_creates_one(world, ui):
+@pytest.mark.parametrize("how", ["abort-after", "empty-after"])
+def test_request_form_lost_response_is_uncertain_and_retry_creates_one(world, ui, how):
     open_wallet(ui)
-    ui.fault("/requests", "POST", "abort-after")
+    ui.fault("/requests", "POST", how)
     ui.fill("request-handle", "bob")
     ui.fill("request-amount", "2.50")
     ui.click("request-submit")
@@ -117,6 +159,7 @@ def test_request_form_lost_response_is_uncertain_and_retry_creates_one(world, ui
     assert len(world.bob.requests()) == 1
     sent = ui.writes("/requests")
     assert sent[0].key == sent[1].key and sent[0].body == sent[1].body
+    assert not ui.page_errors, f"uncaught errors in the page: {ui.page_errors}"
 
 
 # ---------------------------------------------------------------- W10.7 upgrade

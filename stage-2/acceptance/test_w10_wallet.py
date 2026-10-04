@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import time
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -405,6 +407,70 @@ def test_more_than_one_page_of_payments_renders_every_item_once(svc, ui):
     assert ui.reads("/me")[0].query == ""
 
 
+def test_a_payment_made_between_page_reads_leaves_every_item_once(svc, ui):
+    """W10.5, D64 (plan d29e313; critic U06): pages shift under a write made between two page reads; each
+    payment is still shown once."""
+    n = 250
+    pays = [{"id": f"p_{i:03d}", "from_user_id": "u_bob", "to_user_id": "u_ada", "amount": i + 1, "note": f"n{i}"}
+            for i in range(n)]
+    svc.must_reset(fixture(standard_users(), payments=pays))
+    ui.log_in("ada")
+    bob = svc.client("bob")
+    made = []
+
+    def between_pages(route):
+        url = urlsplit(route.request.url)
+        if route.request.method == "GET" and url.path == "/activity" and "offset=" in url.query and not made:
+            made.append(expect_status(bob.pay("ada", 7, note="between pages"), 201))
+        route.fallback()
+
+    ui.page.route("**/*", between_pages)
+    ui.goto("/")
+    expect(ui.el("activity-item-p_000")).to_be_attached()
+    assert made, "the feed was read in one page; this probe cannot run"
+    ids = [t for t in feed_children(ui) if t and t.startswith("activity-item-")]
+    dupes = sorted({t for t in ids if ids.count(t) > 1})
+    assert not dupes, f"shown more than once: {dupes}"
+    missing = sorted({f"activity-item-p_{i:03d}" for i in range(n)} - set(ids))
+    assert not missing, f"missing: {missing[:5]}"
+
+
+LISTS = {"/": ("/activity", ["activity-list"], "activity-item-", "empty-activity"),
+         "/requests": ("/requests", ["incoming-list", "outgoing-list"], "request-item-", "empty-requests"),
+         "/authorizations": ("/authorizations", ["authorization-list"], "authorization-item-", "empty-authorizations")}
+
+
+@pytest.mark.parametrize("screen", ["/", pytest.param("/requests", marks=pytest.mark.item(11)),
+                                    pytest.param("/authorizations", marks=pytest.mark.item(11))])
+def test_a_failed_later_page_is_a_load_error_never_a_short_list(svc, ui, screen):
+    """W10.5, 3.14 load-error, D64 (plan d29e313; critic U30): a load whose later page fails is a failed load."""
+    n = 250
+    if screen == "/":
+        fx = fixture(standard_users(), payments=[
+            {"id": f"p_{i:03d}", "from_user_id": "u_bob", "to_user_id": "u_ada", "amount": i + 1} for i in range(n)])
+    elif screen == "/requests":
+        fx = fixture(standard_users(), requests=[
+            {"id": f"rq_{i:03d}", "requester_id": "u_bob", "payer_id": "u_ada", "amount": i + 1, "status": "pending"}
+            for i in range(n)])
+    else:
+        fx = fixture(standard_users(), authorizations=[
+            seeded_auth(f"a_{i:03d}", "bob", "ada", i + 1, status="voided") for i in range(n)])
+    svc.must_reset(fx)
+    path, containers, prefix, empty = LISTS[screen]
+    ui.log_in("ada")
+    ui.fault(path, "GET", "abort-before", query="offset=", count=50)
+    ui.goto(screen)
+    expect(ui.el("load-error")).to_be_visible()
+    assert any("offset=" in r.query for r in ui.reads(path)), "no later page was read; this probe cannot run"
+    shown = sum(ui.page.eval_on_selector_all(f"{sel(c)} > *", "(els, p) => els.filter(e => "
+                                             "(e.getAttribute('data-testid') || '').startsWith(p)).length", prefix)
+                for c in containers if ui.el(c).count())
+    assert shown in (0, n), f"{shown} of {n} items shown as if the list were complete"
+    ui.absent(empty)
+
+
+# ---------------------------------------------------------------- W10.6 refresh
+
 # ---------------------------------------------------------------- W10.6 refresh
 
 def test_refresh_shows_another_clients_payment_and_keeps_the_form(world, ui):
@@ -461,3 +527,21 @@ def test_a_write_reload_beats_a_slow_earlier_refresh(world, ui):
     held.release()
     ui.page.wait_for_timeout(800)
     ui.wallet(9_900)
+
+
+def test_a_stale_refresh_that_times_out_after_a_later_one_was_shown_leaves_no_load_error(world, ui):
+    """W10.5, I44 (plan d29e313; critic U05): a load's failure applies only if no later load of it was applied."""
+    open_wallet(ui)
+    ui.page.wait_for_load_state("networkidle")
+    held = ui.hold("/me", "GET", count=1)              # never answered: the page gives up on it at 4 s
+    clicked = time.monotonic()
+    ui.click("wallet-refresh")
+    ui.page.wait_for_timeout(500)
+    assert held.routes, "the first refresh did not read /me"
+    expect_status(world.bob.pay("ada", 300), 201)
+    ui.click("wallet-refresh")
+    ui.wallet(10_300)                                  # the later refresh is shown
+    ui.page.wait_for_timeout(max(0, (5.2 - (time.monotonic() - clicked)) * 1_000))   # past the first load's 4 s
+    ui.absent("load-error")
+    ui.wallet(10_300)
+    held.release()

@@ -207,6 +207,24 @@ def test_invalid_capture_input_shows_authorization_error_and_sends_nothing(world
     assert ui.writes(f"/authorizations/{a}/capture") == []
 
 
+def test_a_refused_capture_refills_the_input_with_the_new_remainder(svc, ui):
+    """W11.3 (plan d29e313; critic U23): another client changed the remainder; the refusal's re-read re-fills
+    the input, and the next unchanged click captures the new remainder."""
+    svc.must_reset(fixture(standard_users(), authorizations=[seeded_auth("a_r", "ada", "bob", 1_000)]))
+    ui.log_in("bob", route="/authorizations")
+    box = ui.el("authorization-capture-amount-a_r")
+    expect(box).to_have_value("10.00")
+    expect_status(svc.client("bob").capture("a_r", {"amount": 400, "final": False}), 201)   # bob's other device
+    ui.click("authorization-capture-a_r")              # 10.00, more than the 6.00 left: refused
+    expect(ui.el("authorization-error")).to_be_visible()
+    expect(box).to_have_value("6.00")
+    ui.click("authorization-capture-a_r")
+    expect(ui.el("authorization-item-a_r")).to_have_attribute("data-status", "captured")
+    assert svc.client("ada").money() == (9_000, 9_000, 0)
+    sent = ui.writes("/authorizations/a_r/capture")
+    assert [c.body for c in sent] == [{"amount": 1_000}, {"amount": 600}], [c.body for c in sent]
+    assert sent[0].key != sent[1].key, "a different body is a new key (D42)"
+
 def test_capture_of_an_expired_hold_is_refused(svc, ui):
     svc.must_reset(fixture(standard_users(), ttl=3))
     a = expect_status(svc.client("bob").authorize("ada", 300), 201)
@@ -271,17 +289,24 @@ def test_void_lost_before_commit_stays_uncertain(world, ui):
     ui.absent("authorization-uncertain")
 
 
-def test_authorize_lost_response_is_uncertain_and_retry_creates_one(world, ui):
+@pytest.mark.parametrize("how", ["abort-after", "empty-after"])
+def test_authorize_lost_response_is_uncertain_and_retry_creates_one(world, ui, how):
+    """W11.3, W10.3 (plan d29e313: an empty 201 after commit is unknown too); the re-read shows the hold."""
     open_auths(ui)
-    ui.fault("/authorizations", "POST", "abort-after")
+    ui.fault("/authorizations", "POST", how)
     authorize(ui, "bob", "2.00")
     expect(ui.el("authorize-uncertain")).to_be_visible()
     ui.absent("authorize-error")
+    ui.absent("authorize-success")
+    ui.wallet(10_000, held=200)                       # re-read after the unknown outcome
     ui.click("authorize-submit")
     expect(ui.el("authorize-success")).to_be_visible()
     ui.absent("authorize-uncertain")
     assert len(world.ada.auths()) == 1
     ui.wallet(10_000, held=200)
+    sent = ui.writes("/authorizations")
+    assert len(sent) == 2 and sent[0].key == sent[1].key and sent[0].body == sent[1].body
+    assert not ui.page_errors, f"uncaught errors in the page: {ui.page_errors}"
 
 
 def test_bhd_amounts(svc, ui):
