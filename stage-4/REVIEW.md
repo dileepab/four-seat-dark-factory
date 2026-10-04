@@ -173,3 +173,31 @@ On f4c2f9e, the clean run of `test_w20_batches.py`, `test_w20_concurrency.py` an
 - `test_members_of_a_seeded_settlement` expects 201 for p_one (Cy to Dee, seeded, 10) corrected to 5.
   - Dee's seeded balance is 0. The correction debits Dee 5.
   - So 409 `insufficient_funds` is right (I74, D99), and the service answers that.
+
+## W19 @ 2b3944a, suite 2f9c559: APPROVED
+
+- Commit: `2b3944aa9a330c96588cf194fff05c72d99739b7`, the same commit as the BLOCKED entry above. No product code changed.
+- Suite: `2f9c559d3b115636139619b801c11d99640d3caa` (W22.7). It changes tests only: `test_w16_corrections.py`, `test_w19_refunds.py` and `test_w20_batches.py`.
+- Verifier: PASS at 2b3944a on suite 1028890. It carries over to 2f9c559 (PLAN.md, W19 row: the touched tests on 2b3944a gave "179 passed, 137 deselected").
+- Reason: the one survivor, RF18, now fails a test for its reason. Every other result carries over (PROTOCOL: a tests-only commit, the critic reruns its survivors).
+
+### What I reran
+
+- Files: `test_w19_refunds.py`, `test_w19_concurrency.py`, `test_w16_corrections.py` and `test_w2_idempotency.py`, `--upto 19`, `-m "not container"`, two local servers. Logs are in `rerun_logs_s4_2f9c559/`.
+- The clean run on 2b3944a: "318 passed, 15 deselected".
+- RF18, the refund's 2^53 guard moved above the funds: "1 failed, 317 passed".
+  - It fails in `test_the_guard_comes_after_the_403_the_cap_and_the_funds`: "expected 409 insufficient_funds, got 422 validation_failed ... the refund would take the payment's sender above 2^53".
+  - That is its reason.
+- I also made two mutants for the correction steps that W22.7 now tests (`mutants_s4_w19_extra.json`). Each fails for its reason:
+  - RC07, correction steps 12 and 13 swapped, so the guard comes before the funds: `test_the_funds_come_before_the_guard`, "expected 409 insufficient_funds, got 422 validation_failed".
+  - RC08, the guard moved after history: `test_the_guard_comes_before_history`, "expected 422 validation_failed, got 409 historical_overdraft".
+- A third extra mutant ran on suite 1028890: RC06, a correction's debit judged on the total, not on `available` (W19.6, D53).
+  - It fails in `test_a_correction_debit_is_judged_on_available`: "expected 409 insufficient_funds, got 409 historical_overdraft" (`rerun_logs_s4/RC06.txt`).
+  - My probe has no case with a hold under a correction's debit, so it does not see RC06. The suite does.
+- Probes: `probe_w19.py` now also checks correction steps 12/13 and 13/14 with inputs that fail both. On 2b3944a it makes 93 checks: "0 failed" (`log_probe_w19_2b3944a_v2.txt`). RC07 and RC08 each fail one of the new checks (`log_probe_mut_w19_extra.txt`).
+
+### Result
+
+- 70 mutants: the 67 above plus RC06 to RC08.
+- Each one now fails at least one acceptance or builder test for its reason. None survives both suites.
+- W19 at 2b3944a is APPROVED on suite 2f9c559.
