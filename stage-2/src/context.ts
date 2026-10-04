@@ -19,7 +19,8 @@ export interface Ctx {
 
 export interface Result {
   status: number;
-  body?: unknown;
+  body?: unknown; // a JSON body
+  raw?: { headers: Record<string, string>; body: Buffer }; // a page or a static file (ui.ts)
 }
 
 // The body as one JSON object: 422 when over the size limit, 400 when unreadable.

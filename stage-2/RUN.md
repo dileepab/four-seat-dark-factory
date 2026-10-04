@@ -5,8 +5,26 @@ built-in type stripping). No npm dependencies: nothing is downloaded at build or
 State is held in memory; a restart starts empty.
 
 Stage 2 adds payment authorizations (holds): `POST /authorizations`, capture, void and
-`GET /authorizations`, with `GET /me` reporting `total`, `available` and `held`. The browser
-UI arrives with W9 to W11 and is served by the same process.
+`GET /authorizations`, with `GET /me` reporting `total`, `available` and `held`, and a browser
+UI served by the same process.
+
+## The UI
+
+Open `http://localhost:8080/` in a browser. Every page is the same HTML shell with plain
+JavaScript modules and one stylesheet from `ui/` (served under `/assets/`); nothing is loaded
+from another origin.
+
+- `/login`, `/signup` — sign in or create an account; the session token is kept in the
+  browser's `localStorage`.
+- `/` — the wallet: available (the headline), total and held, the pay, request and authorize
+  forms, and the activity feed.
+- `/requests` — incoming and outgoing requests with pay, decline and cancel.
+- `/split` — split a bill equally, with a live preview of each share.
+- `/authorizations` — holds in both directions: authorize, capture, void.
+
+`/requests` and `/authorizations` are shared with the JSON API: a browser (whose `Accept`
+lists `text/html`) gets the page, every other client gets JSON. An unknown path answers JSON
+404, or the page's not-found screen for a browser.
 
 All commands below run from the repository root, `/Users/Dileepa/dark-factory-v3`.
 
@@ -75,4 +93,8 @@ scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 -
   `src/time.ts` — RFC 3339 instants; `src/fixture.ts` — reset validation; `src/snapshot.ts` —
   export (schema 2) and import (schemas 1 and 2); `src/idempotency.ts` — idempotent write paths; `src/ledger.ts` — moving
   money; `src/passwords.ts` — scrypt hashing and bearer tokens.
+- `src/ui.ts` — the HTML shell, static files and `Accept` negotiation; `ui/index.html` and
+  `ui/assets/` — the browser code (`app.js` routing and header, one module per screen,
+  `money.js`, `split.js` and `retry.js` pure logic, `api.js` the page's API calls) and
+  `app.css`.
 - `test/` — builder tests.

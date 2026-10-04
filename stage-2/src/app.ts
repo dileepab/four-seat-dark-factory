@@ -6,6 +6,7 @@ import type { Ctx, Result } from './context.ts';
 import { ApiError, errorBody, notFound } from './errors.ts';
 import { MAX_DEPTH } from './json.ts';
 import { matchRoute } from './routes.ts';
+import { notFoundPage, uiResponse } from './ui.ts';
 
 const API_BODY_LIMIT = 1024 * 1024; // 1 MiB (D8)
 const TEST_BODY_LIMIT = 64 * 1024 * 1024; // reset and import (D8)
@@ -31,7 +32,8 @@ export function createApp(): http.Server {
 async function serve(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const result = await dispatch(req);
-    send(res, result.status, result.body);
+    if (result.raw) sendRaw(res, result.status, result.raw);
+    else send(res, result.status, result.body);
   } catch (err) {
     if (err instanceof ApiError) {
       send(res, err.status, errorBody(err.code, err.message));
@@ -50,10 +52,17 @@ async function dispatch(req: http.IncomingMessage): Promise<Result> {
   const q = target.indexOf('?');
   const rawPath = q < 0 ? target : target.slice(0, q);
   const query = new URLSearchParams(q < 0 ? '' : target.slice(q + 1));
-  const match = matchRoute(method, rawPath);
+  // The UI's pages and files answer GETs before the API's routes (plan 3.14, D40).
+  const page = method === 'GET' ? uiResponse(rawPath, req.headers.accept) : null;
+  const match = page ? null : matchRoute(method, rawPath);
   // The body is always drained, so the client can read the answer whatever it is.
   const { body, tooLarge } = await readBody(req, match?.route.testBody ? TEST_BODY_LIMIT : API_BODY_LIMIT);
-  if (!match) throw notFound(`no route for ${method} ${rawPath}`);
+  if (page) return page;
+  if (!match) {
+    const missing = method === 'GET' ? notFoundPage(req.headers.accept) : null;
+    if (missing) return missing;
+    throw notFound(`no route for ${method} ${rawPath}`);
+  }
   const ctx: Ctx = {
     method, path: match.path, query, headers: req.headers, params: match.params, body, tooLarge,
     maxDepth: match.route.testBody ? TEST_BODY_DEPTH : MAX_DEPTH,
@@ -105,6 +114,12 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
     'Content-Length': Buffer.byteLength(text),
   });
   res.end(text);
+}
+
+function sendRaw(res: http.ServerResponse, status: number, raw: { headers: Record<string, string>; body: Buffer }): void {
+  if (res.headersSent || res.destroyed) return;
+  res.writeHead(status, { ...raw.headers, 'Content-Length': raw.body.length });
+  res.end(raw.body);
 }
 
 // Requests the HTTP parser itself refuses still get the envelope (D28).
