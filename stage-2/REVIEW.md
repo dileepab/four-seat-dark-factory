@@ -91,3 +91,102 @@ Sent to the planner as one batch: 8 defects, 3 small gaps and 3 recommendations.
 
 - §5 lists D63 between D62 and D61.
 - 3.15 "with the viewer marked 'you'" should keep both handles inside `activity-parties-{payment_id}`, adding "you" rather than replacing a handle. The supplied `test_feed_shows_a_payment_with_its_parts` checks that the viewer's own handle is there.
+
+### Plan re-review: 45fe2dc (not a verdict)
+
+45fe2dc applies all 14 points. I checked the new text:
+- I34, 3.5, 3.6, 3.7 and D50: expiry applies only to open authorizations; the capture order; the void table; both seeded `expired` corners.
+- D65, D64 (every page, read from the bare path) and D43 (4 s with an abort).
+- W7.3, W7.6, W7.9, W8.2, W9.2, W9.6, W10.3–W10.5 and W11.1–W11.4.
+- The import `now` in 3.12, and `closed_at` for seeded authorizations in 3.11 and §1.
+- D46 and I46.
+- The key rule for re-filled bodies. It is added on top of the input-event rule, which stays.
+
+## W7: BLOCKED @ 16adbc08c6e4f775105e12c5893eccadbefb5a61
+
+The verifier posted PASS for W7 on this commit with suite cb62939 (room message cb1d9d2a):
+- npm test 129/129;
+- the offline build and `--network=none` health check;
+- `run.sh --upto 7`: 1459 passed;
+- the supplied checks: stage 1 147/147; stage 2 failed only on the 33 UI checks that need W9–W11.
+
+### Reason: a reset can keep the previous state's clock, and no test notices
+
+This breaks:
+- I25: "an accepted one replaces all state";
+- stage-1 §10: "Reset clears all state, including imported state";
+- plan 3.7 / D49: "A reset starts its state's last issued timestamp at the reset's own wall-clock time";
+- W7.8: "seeded open holds count in `held` right after the reset".
+
+Evidence:
+- **Mutant X15** (`src/fixture.ts` `buildState`): `st.lastTs = formatTs(resetMs)` becomes `formatTs(Math.max(resetMs, Date.parse(store.state.lastTs) || 0))`. A reset then keeps the old clock whenever that clock ran ahead of the wall clock.
+  - It survives npm test (129/129).
+  - It survives suite cb62939 `--upto 7` on local servers with the container checks deselected (1452 passed, the same as the clean baseline).
+- **Probe** (`.work/critic-h6bj/probe_x15.py`):
+  1. Reset, export, set the export's `last_ts` to 2099, and import it (204).
+  2. Reset with an open hold of 400 from ada to bob expiring in two hours.
+  3. Read `GET /me` and `GET /authorizations`, then pay 1.
+
+  | | held | hold status | hold `created_at` | next payment |
+  |---|---|---|---|---|
+  | Clean 16adbc0 | 400 | `open` | `2026-10-04T10:11:55.506+00:00` | dated 2026 |
+  | X15 | 0 | `expired` at once | `2099-01-01T00:00:00.000+00:00` | dated 2099 |
+
+- **Why no test catches it.** No test resets after an import whose clock is ahead. The `_shift_years` probe in `test_w5_export_import.py` (the stage-1 E04 test) stops at the import.
+
+### Missing evidence (verifier)
+
+A test that:
+1. imports an export shifted to 2099 with `_shift_years`;
+2. resets with a fixture holding an open hold that expires in two hours;
+3. asserts that `held` equals the hold, that `GET /authorizations` shows it `open`, and that its `created_at` and a new payment's `created_at` are both earlier than 2099.
+
+The product needs no change. A rerun of the touched test on 16adbc0 carries the PASS over as a tests-only delta, and I will rerun X15 against it.
+
+### Mutants (69 on 16adbc0; `.work/critic-h6bj/mutants_w7.json`, results `results_w7_unit_*.json`, `results_w7_acc_*.json`)
+
+- **npm test kills 64**, each for the mutated reason. Failing test names checked:
+  - G01 and G02: Me fields.
+  - H01, H01b, H03, H05 and H06: held, the clock, the remainder, and expiry only for open authorizations.
+  - A01 to A06: funds on `available` and the boundary; the TTL; self; precedence; the holds index.
+  - C01 to C17: the capture order and the seeded corner; the deadline; the remainder; closing; the records; the payment shape; the guard; release on close.
+  - V01 to V05: void. L01 to L05: the list. F01 to F03: funds on `available`.
+  - X01 to X12, X16, X17, X19 and X22: reset.
+  - W01 and W03: payment shape, and the replay body copied rather than aliased.
+  - Notes on two kills:
+    - A03 (TTL ignored) also hangs three expiry tests that wait without a bound. Its clean failures ("uses the fixture TTL" and the W7.6 tests) make the kill count.
+    - X06 also refuses zero-balance users. Its failing tests include "counts seeded unexpired open holds against the balance: equal is fine".
+- **The suite kills X21** (the `expires_at` offset sign flipped) in `test_w7_expiry.py::test_seeded_expires_at_is_compared_as_an_instant`.
+- **X15** is the reason above.
+- **H02, H04 and C06d** turn `>=` into `>` at the deadline: for `held`, `status` and capture at exactly `expires_at`. C06d survives the suite. I stopped the H02 and H04 suite runs to keep the verifier's W8 verdict run unloaded; npm test does not kill them.
+  - Black-box tests cannot hit that millisecond without control of the clock, so I count these as equivalent in practice at W7.
+  - W8 makes a deterministic test possible: import a schema-2 state whose last issued timestamp equals an open hold's `expires_at`, both ahead of the wall clock. The import's `now` is then exactly the deadline, so the hold must read `expired`, hold nothing and answer capture with 409 `authorization_expired`. That test also kills the forced-skew variants below. I will look for it in the W8 review.
+- **Forced-skew variants H04b and H02b** move expiry 300 ms after the deadline. They survive the suite: the expiry tests read later than that after the deadline. C06e was not run; it is in the same class. A read at `expires_at + 100 ms` would catch these. Recommended, not blocking, given the deterministic W8 test above.
+
+### Clause map (W7)
+
+| Plan clause | Code @ 16adbc0 | Killing tests (mutant) |
+|---|---|---|
+| 3.6 Me, I30 | `me.ts`; `state.ts` `heldBy` and `availableOf` (stored-open index; counts `expiresMs > now`; prunes at the last issued timestamp) | W7.1 tests; 50 concurrent payments and authorizations (G01, G02, H01, H01b, H03, A06) |
+| 3.5 and 3.10 `POST /authorizations` | `createAuthorization`: types, values, 404, `self_payment`, `available` 409, `created_at` + TTL | POST /payments precedence rows (A04, A05); exactly `available` (A01, A02); TTL (A03, X22) |
+| 3.5 and 3.10 capture | `captureAuthorization`: `final` type, amount, 404, 403, captured or voided not open, deadline expired, stored `expired` ahead not open, exceeds against the remainder, 2^53, one step | D50 order (C01, C03, C04, C05); seeded corners (C06c); expiry only for open (C06); deadline (C06b); remainder (C07, C16); closing (C08, C09, C17); records (C10, C11, C12); payment shape (C13, C13b, C14, W01); guard (C15) |
+| 3.5 and 3.10 void | `voidAuthorization` with `statusAt` | V01–V05 |
+| 3.10 list | `listAuthorizations` with `statusAt` | L01–L05 |
+| I33 | `remainingAt`, `closeAuthorization` | H06, C17 |
+| I34; 3.7 clock | `clock()` = max(wall, last issued), read without side effects; `issue()` at commit; `statusAt` turns only stored-open authorizations into expired | H01, H01b, H05, C06, C06b, L02, V03, V05; the exact boundary: see above |
+| I31, D53 | `payments.ts`, `requests.ts`, `settlements.ts` on `available` | F01, F02, F03 |
+| 3.11 reset | `validateFixture` and `buildState`; `time.ts` `rfc3339Ms` (calendar date, ranges, offset, millisecond rounding up) | X01–X12, X16, X17, X19, X21 (suite); the re-base: **none** (X15) |
+| I15 replay of authorizations | `authorizationView` copies `payment_ids` | W03 |
+
+### Other checks
+
+- No special-casing: `grep` finds no fixture ids, handles, emails or sample amounts in `src/`.
+- No outbound network APIs. The Dockerfile copies `package.json` and `src/` and downloads nothing.
+- Every new handler is synchronous between its checks and its commit: no `await` in `authorizations.ts`. `reset` swaps a state built aside.
+- Every error path throws before any change.
+- `RUN.md` describes stage 2 (W9.6).
+
+### Polish (recorded, not sent as defects)
+
+- `stage-2/Dockerfile` still says "Pocketful stage 1" in its comment.
+- Three builder expiry tests wait without a bound when expiry never comes (seen under A03). A bounded wait would fail fast instead.
