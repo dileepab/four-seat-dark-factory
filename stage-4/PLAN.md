@@ -10,9 +10,9 @@ Frozen references: `stage-1/` (accepted at 4baf8d9), `stage-2/` (accepted at f9e
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
 | W19 | builder | Refunds: `POST /payments/{id}/refunds`, `refund_of` on every payment, corrections bounded by refunds | BUILDING (2b3944a, gate running; 4484652 left out two new files) | 2b3944a |
-| W20 | builder | Batch corrections: `POST /correction-batches`, settlement members, combined funds and history | PLANNED | — |
-| W21 | builder | Export schema 4; import of stage-1, stage-2, stage-3 and stage-4 exports; RUN.md | PLANNED | — |
-| W22 | verifier | Stage-4 acceptance suite: stage-1 to stage-3 regression, refunds, batches, upgrade | BUILDING (the regression being brought to the stage-4 contract) | — |
+| W20 | builder | Batch corrections: `POST /correction-batches`, settlement members, combined funds and history | BUILDING (9948ff9) | 9948ff9 |
+| W21 | builder | Export schema 4; import of stage-1, stage-2, stage-3 and stage-4 exports; RUN.md | BUILDING (f4c2f9e) | f4c2f9e |
+| W22 | verifier | Stage-4 acceptance suite: stage-1 to stage-3 regression, refunds, batches, upgrade | BUILDING (first suite 1028890 at 16:23Z; trace F1-F43 filled from it at 16:25Z, every row has tests) | 1028890 |
 
 Item numbers continue from stage 3 (W1–W18). States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
 
@@ -229,49 +229,49 @@ Each normative line of stage-4.md, condensed (F1–F43), with the acceptance tes
 
 | F | Section | Normative line (condensed) | Plan | Tests | Status |
 |---|---|---|---|---|---|
-| F1 | intro | recipients can refund payments | W19 | | |
-| F2 | intro | operators correct several payments in one request, settlement payments included | W20 | | |
-| F3 | intro | existing receipts and saved statements stay available in their original form | I75 I76 D106 W19.4 W20.9 W21.3 | | |
-| F4 | intro | ten idempotent write paths | I15–I19 W19.1 W20.3 | | |
-| F5 | refunds | `POST /payments/{id}/refunds` `{"amount"}` requires an idempotency key | W19.1 W19.2 | | |
-| F6 | refunds | only the original receiver may refund, else 403; unknown payment 404 | I71 D90 W19.2 | | |
-| F7 | refunds | the target may be a direct payment, request payment or capture, never a refund | I71 W19.3 | | |
-| F8 | refunds | invalid amount 422 | D89 W19.2 | | |
-| F9 | refunds | refunds cumulatively at most the current corrected amount, else 422 `refund_exceeds_payment` | I69 D92 W19.2 W19.3 | | |
-| F10 | refunds | refunds of refunds 422 `invalid_refund_target` | I71 W19.2 | | |
-| F11 | refunds | a new payment in the opposite direction: `refund_of`, null `request_id` and `authorization_id`, the original note and visibility | I68 D91 W19.1 | | |
-| F12 | refunds | 201 with that payment; a replay 200 with the original body | I15 W19.1 | | |
-| F13 | refunds | moves existing money from the receiver's available funds, or 409 `insufficient_funds`, atomically | I70 W19.2 | | |
-| F14 | refunds | never reopens a request or authorization or restores a released hold | I70 D93 W19.4 | | |
-| F15 | refunds | other payments have `refund_of: null` | I68 W19.5 | | |
-| F16 | corrections | stage-3 corrections remain for ordinary direct and request payments | I66 W19.6 | | |
-| F17 | corrections | captures and refunds cannot be corrected: 422 `linked_payment_immutable` | I62 W19.6 W20.5 | | |
-| F18 | corrections | a correction cannot go below the refunded amount: 422 `refund_exceeds_payment` | I69 D94 W19.6 W20.5 | | |
-| F19 | corrections | correction debits are checked against available funds | D74 W19.6 W20.7 | | |
-| F20 | batches | `POST /correction-batches` needs an operator and a key; 401 and 403 as settlements | D95 W20.2 | | |
-| F21 | batches | body `{"corrections": [{payment_id, expected_revision, amount, effective_at, reason}]}` | 3.9 W20.1 | | |
-| F22 | batches | 1..32 objects with distinct payment ids, else 422 | D95 W20.4 | | |
-| F23 | batches | every item has the ordinary correction fields and validation | W20.5 | | |
-| F24 | batches | unknown payment 404; stale expected revision 409 `stale_revision` | W20.5 | | |
-| F25 | batches | the operator may correct ordinary, request and settlement payments; captures and refunds stay immutable | I62 D96 W20.2 W20.5 | | |
-| F26 | batches | correcting a settlement member needs every member of that settlement, else 422 `incomplete_settlement` | I73 W20.6 | | |
-| F27 | batches | members of one settlement share one effective instant (spellings may differ), else 422 | I73 D98 W20.6 | | |
-| F28 | batches | single corrections remain available for nonmembers | W20.6 | | |
-| F29 | batches | unknown fields are ignored | W20.5 | | |
-| F30 | batches | precedence: item errors in input order, completeness, current available funds, then history at every boundary | D95 W20.5 W20.7 | | |
-| F31 | batches | the existing codes apply: `linked_payment_immutable`, `refund_exceeds_payment`, `insufficient_funds`, `historical_overdraft` | W20.5 W20.7 | | |
-| F32 | batches | affordability by the combined effect of all proposed revisions | I74 D99 W20.7 | | |
-| F33 | batches | a rejected batch leaves history, balances and idempotency records unchanged | I72 W20.8 | | |
-| F34 | batches | 201 with `correction_batch_id`, `recorded_at` and `revisions` in input order | I72 W20.1 | | |
-| F35 | batches | all new revisions share `recorded_at`, strictly later than each member's previous one | I72 D100 W20.1 | | |
-| F36 | batches | each revision exposes `correction_batch_id` | D97 W20.1 | | |
-| F37 | batches | effective times cannot be later than now | D81 W20.5 | | |
-| F38 | batches | original payments and receipts never change; payment and settlement retries return their original bodies | I75 W20.9 | | |
-| F39 | batches | new statements reflect the new revisions; earlier snapshot tokens page their frozen entries | I76 D106 W20.9 | | |
-| F40 | batches | a replay returns the original batch response with 200; one more idempotent path | I15 W20.3 | | |
-| F41 | last | a settlement payment may be refunded; refunds never change settlement membership | I75 D98 W19.3 W19.4 | | |
-| F42 | last | concurrent corrections sharing any expected payment revision cannot both succeed | I63 D105 W20.10 | | |
-| F43 | last | accept exports from stages 1 to 3, retaining settlement membership, corrections and snapshots | I65 D102 D106 W21.3 | | |
+| F1 | intro | recipients can refund payments | W19 | w19_refunds: a_refund_is_a_new_payment_in_the_opposite_direction | tests at 1028890; verdict pending |
+| F2 | intro | operators correct several payments in one request, settlement payments included | W20 | w20_batches: a_whole_settlement_with_ordinary_payments, an_operator_may_correct_request_settlement_and_seeded_payments | tests at 1028890; verdict pending |
+| F3 | intro | existing receipts and saved statements stay available in their original form | I75 I76 D106 W19.4 W20.9 W21.3 | w19_refunds: the_refunded_payment_stays_as_it_was, a_refund_in_statements_and_history_views; w20_batches: originals_replays_and_settlement_responses_stay, new_statements_use_the_batch_and_old_snapshots_do_not; w21_upgrade: stage_3_snapshots_page_in_their_own_form (D106) | tests at 1028890; verdict pending |
+| F4 | intro | ten idempotent write paths | I15–I19 W19.1 W20.3 | w2_idempotency: every scenario [refunds] and [batches], same_key_on_the_ten_paths_is_independent | tests at 1028890; verdict pending |
+| F5 | refunds | `POST /payments/{id}/refunds` `{"amount"}` requires an idempotency key | W19.1 W19.2 | w2_idempotency: missing_key_is_400_and_changes_nothing[refunds]; w19_refunds: precedence_of_the_common_steps | tests at 1028890; verdict pending |
+| F6 | refunds | only the original receiver may refund, else 403; unknown payment 404 | I71 D90 W19.2 | w19_refunds: who_may_refund, a_refund_cannot_be_refunded | tests at 1028890; verdict pending |
+| F7 | refunds | the target may be a direct payment, request payment or capture, never a refund | I71 W19.3 | w19_refunds: a_refund_is_a_new_payment_in_the_opposite_direction (a direct payment), a_request_payment_is_refundable_and_the_request_stays_paid, a_capture_is_refundable_and_its_open_authorization_does_not_change, a_settlement_member_is_refundable_and_stays_a_member, a_seeded_payment_is_refundable | tests at 1028890; verdict pending |
+| F8 | refunds | invalid amount 422 | D89 W19.2 | w19_refunds: an_invalid_amount_is_422_and_changes_nothing, integral_number_forms_are_valid | tests at 1028890; verdict pending |
+| F9 | refunds | refunds cumulatively at most the current corrected amount, else 422 `refund_exceeds_payment` | I69 D92 W19.2 W19.3 | w19_refunds: refunds_together_may_reach_the_amount_but_not_pass_it, the_cap_follows_the_current_corrected_amount, the_cap_ignores_effective_time, after_a_correction_to_zero_nothing_is_refundable; w19_concurrency: fifty_refunds_of_one_payment_never_pass_the_cap | tests at 1028890; verdict pending |
+| F10 | refunds | refunds of refunds 422 `invalid_refund_target` | I71 W19.2 | w19_refunds: a_refund_cannot_be_refunded | tests at 1028890; verdict pending |
+| F11 | refunds | a new payment in the opposite direction: `refund_of`, null `request_id` and `authorization_id`, the original note and visibility | I68 D91 W19.1 | w19_refunds: a_refund_is_a_new_payment_in_the_opposite_direction, unknown_body_fields_are_ignored; teardown I68 (Service.assert_refund_invariants) | tests at 1028890; verdict pending |
+| F12 | refunds | 201 with that payment; a replay 200 with the original body | I15 W19.1 | w19_refunds: a_replay_returns_the_original_body_after_later_refunds_and_corrections; w2_idempotency [refunds] | tests at 1028890; verdict pending |
+| F13 | refunds | moves existing money from the receiver's available funds, or 409 `insufficient_funds`, atomically | I70 W19.2 | w19_refunds: held_funds_are_not_available_for_a_refund, the_cap_comes_before_the_funds; w19_concurrency: refunds_of_two_payments_racing_for_the_same_funds | tests at 1028890; verdict pending |
+| F14 | refunds | never reopens a request or authorization or restores a released hold | I70 D93 W19.4 | w19_refunds: a_capture_is_refundable_and_its_open_authorization_does_not_change, refunding_a_final_capture_leaves_the_authorization_closed, refunding_a_capture_of_a_voided_hold_restores_no_hold, refunding_a_capture_of_an_expired_hold_restores_no_hold, a_request_payment_is_refundable_and_the_request_stays_paid | tests at 1028890; verdict pending |
+| F15 | refunds | other payments have `refund_of: null` | I68 W19.5 | w19_refunds: every_other_payment_has_refund_of_null; support.check_payment (every payment read); w21_upgrade: stage_1_payments_carry_refund_of_null_and_replays_stay_verbatim, stage_2_payments_carry_refund_of_null_and_replays_stay_verbatim, stage_3_state_reads_back_with_refund_of_null | tests at 1028890; verdict pending |
+| F16 | corrections | stage-3 corrections remain for ordinary direct and request payments | I66 W19.6 | w16_corrections (regression); w19_refunds: the_correction_order_with_refunds | tests at 1028890; verdict pending |
+| F17 | corrections | captures and refunds cannot be corrected: 422 `linked_payment_immutable` | I62 W19.6 W20.5 | w19_refunds: a_refund_cannot_be_corrected; w16_corrections: captures_and_settlement_members_are_immutable; w20_batches: item_resource_errors, a_refund_of_a_member_is_not_a_member | tests at 1028890; verdict pending |
+| F18 | corrections | a correction cannot go below the refunded amount: 422 `refund_exceeds_payment` | I69 D94 W19.6 W20.5 | w19_refunds: a_correction_cannot_go_below_the_refunded_total; w20_batches: item_resource_errors, a_batch_lowering_a_payment_to_its_refunded_total_leaves_nothing_to_refund | tests at 1028890; verdict pending |
+| F19 | corrections | correction debits are checked against available funds | D74 W19.6 W20.7 | w19_refunds: a_correction_debit_is_judged_on_available; w20_batches: held_funds_count_in_the_combined_effect | tests at 1028890; verdict pending |
+| F20 | batches | `POST /correction-batches` needs an operator and a key; 401 and 403 as settlements | D95 W20.2 | w20_batches: a_batch_needs_a_token, a_non_operator_is_403_before_the_key_and_the_body; w2_idempotency [batches] | tests at 1028890; verdict pending |
+| F21 | batches | body `{"corrections": [{payment_id, expected_revision, amount, effective_at, reason}]}` | 3.9 W20.1 | w20_batches: a_batch_returns_one_revision_per_item_in_input_order | tests at 1028890; verdict pending |
+| F22 | batches | 1..32 objects with distinct payment ids, else 422 | D95 W20.4 | w20_batches: a_bad_shape_is_422_before_any_item, thirty_two_items_are_accepted | tests at 1028890; verdict pending |
+| F23 | batches | every item has the ordinary correction fields and validation | W20.5 | w20_batches: invalid_item_fields_are_422_and_change_nothing | tests at 1028890; verdict pending |
+| F24 | batches | unknown payment 404; stale expected revision 409 `stale_revision` | W20.5 | w20_batches: item_resource_errors, the_first_failing_item_decides | tests at 1028890; verdict pending |
+| F25 | batches | the operator may correct ordinary, request and settlement payments; captures and refunds stay immutable | I62 D96 W20.2 W20.5 | w20_batches: an_operator_may_correct_payments_between_other_users, an_operator_may_correct_request_settlement_and_seeded_payments, item_resource_errors | tests at 1028890; verdict pending |
+| F26 | batches | correcting a settlement member needs every member of that settlement, else 422 `incomplete_settlement` | I73 W20.6 | w20_batches: some_but_not_all_members_is_incomplete_settlement, members_of_a_seeded_settlement, two_settlements_in_one_batch | tests at 1028890; verdict pending |
+| F27 | batches | members of one settlement share one effective instant (spellings may differ), else 422 | I73 D98 W20.6 | w20_batches: members_need_one_effective_instant, one_instant_in_any_spelling_is_accepted, member_instants_that_differ_only_in_trailing_zeros_are_one_instant | tests at 1028890; verdict pending |
+| F28 | batches | single corrections remain available for nonmembers | W20.6 | w20_batches: single_corrections_of_members_stay_immutable | tests at 1028890; verdict pending |
+| F29 | batches | unknown fields are ignored | W20.5 | w20_batches: unknown_item_fields_are_ignored, unknown_top_level_fields_are_ignored | tests at 1028890; verdict pending |
+| F30 | batches | precedence: item errors in input order, completeness, current available funds, then history at every boundary | D95 W20.5 W20.7 | w20_batches: the_first_failing_item_decides, completeness_is_checked_before_the_shared_instant, the_order_after_the_items | tests at 1028890; verdict pending |
+| F31 | batches | the existing codes apply: `linked_payment_immutable`, `refund_exceeds_payment`, `insufficient_funds`, `historical_overdraft` | W20.5 W20.7 | w20_batches: item_resource_errors, held_funds_count_in_the_combined_effect, history_is_checked_with_every_new_revision_together | tests at 1028890; verdict pending |
+| F32 | batches | affordability by the combined effect of all proposed revisions | I74 D99 W20.7 | w20_batches: affordability_is_the_combined_effect, available_at_exactly_zero_is_accepted_and_one_unit_more_is_refused, held_funds_count_in_the_combined_effect | tests at 1028890; verdict pending |
+| F33 | batches | a rejected batch leaves history, balances and idempotency records unchanged | I72 W20.8 | w20_batches: a_rejected_batch_changes_nothing_and_claims_no_key (and state() in every refusal test) | tests at 1028890; verdict pending |
+| F34 | batches | 201 with `correction_batch_id`, `recorded_at` and `revisions` in input order | I72 W20.1 | w20_batches: a_batch_returns_one_revision_per_item_in_input_order | tests at 1028890; verdict pending |
+| F35 | batches | all new revisions share `recorded_at`, strictly later than each member's previous one | I72 D100 W20.1 | w20_batches: a_batch_returns_one_revision_per_item_in_input_order, every_batch_has_its_own_id_and_a_later_recorded_at; support.check_batch | tests at 1028890; verdict pending |
+| F36 | batches | each revision exposes `correction_batch_id` | D97 W20.1 | w20_batches: a_batch_appends_revision_n_plus_1_and_other_revisions_keep_six_fields; support.check_revision | tests at 1028890; verdict pending |
+| F37 | batches | effective times cannot be later than now | D81 W20.5 | w20_batches: an_effective_at_later_than_now_is_422, no_clock_tolerance_on_effective_at | tests at 1028890; verdict pending |
+| F38 | batches | original payments and receipts never change; payment and settlement retries return their original bodies | I75 W20.9 | w20_batches: originals_replays_and_settlement_responses_stay | tests at 1028890; verdict pending |
+| F39 | batches | new statements reflect the new revisions; earlier snapshot tokens page their frozen entries | I76 D106 W20.9 | w20_batches: new_statements_use_the_batch_and_old_snapshots_do_not; w20_concurrency: snapshot_pages_stay_frozen_while_batches_and_refunds_commit | tests at 1028890; verdict pending |
+| F40 | batches | a replay returns the original batch response with 200; one more idempotent path | I15 W20.3 | w2_idempotency [batches]; w20_batches: the_common_steps | tests at 1028890; verdict pending |
+| F41 | last | a settlement payment may be refunded; refunds never change settlement membership | I75 D98 W19.3 W19.4 | w19_refunds: a_settlement_member_is_refundable_and_stays_a_member; w20_batches: a_refund_of_a_member_is_not_a_member | tests at 1028890; verdict pending |
+| F42 | last | concurrent corrections sharing any expected payment revision cannot both succeed | I63 D105 W20.10 | w20_concurrency: batches_and_single_corrections_on_one_revision_have_one_winner, two_overlapping_batches_have_one_winner, fifty_batches_over_one_settlement_move_money_once | tests at 1028890; verdict pending |
+| F43 | last | accept exports from stages 1 to 3, retaining settlement membership, corrections and snapshots | I65 D102 D106 W21.3 | w21_upgrade (every test); w8_upgrade, w17_upgrade (regression) | tests at 1028890; verdict pending |
 
 ## 7. Handoff log
 
@@ -279,6 +279,7 @@ Each normative line of stage-4.md, condensed (F1–F43), with the acceptance tes
 |---|---|---|---|---|
 | Stage-4 handoff, parts 1-16 (plan 76b3707) | builder, verifier, critic | 15:51Z | critic (plan review, c8106d0), builder (W19 at 2b3944a, 16:05Z; plan revision acknowledged), verifier (after a liveness ping at 16:11Z: all 16 parts and the revision arrived; regression brought to stage 4, W19 and W20 tests drafted) | acknowledged |
 | Critic plan review @ 76b3707 (REVIEW.md c8106d0: 1 defect, 1 wording, 7 criteria) -> plan revision: D106 (snapshots keep their payment form), I76, 3.6, 3.11, 3.12 wording, W19.3, W19.4, W20.4-W20.7, W21.2, W21.3 | builder, verifier, critic | 16:02Z | — | sent |
+| Verifier: first W22 suite 1028890 (16:23Z) with a trace map -> planner: trace filled; 95 test names checked against 1028890, none missing; no gap found | verifier | 16:25Z | — | done |
 
 ## 8. Stage close
 
