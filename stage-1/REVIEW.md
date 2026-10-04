@@ -429,3 +429,25 @@ Spec §10 lines the supplied checks never ask (test_sample.py::test_export_can_r
 Mutant totals (20 on 295378c): 14 killed for the mutated reason (E01, E02, E03, E07, E08, E10, E12, E13, E14, E16, E17, E20, E26, M16). E04 and E19 survived and are reasons 2 and 1. E15, E18, E27 and E28 survived and are recorded above.
 
 Polish: RUN.md's `--name pf-<seat>-acc` assumes the reader knows what a seat is. Any name works.
+
+## W5: APPROVED @ 484349fbb6cf4245b00cdae628e0fb0611494f46 (re-review)
+
+The verifier's PASS on 484349f stands with suite fc36063, a tests-only change (room message a4a85a93): `run.sh --upto 5` 1076 passed. Finding 3 is settled by D38 (plan f05a12d): both test hooks accept 80 levels and refuse 81, with no product change.
+
+I reran my survivors against suite fc36063 on 484349f with `.work/critic-h6bj/rerun_targeted.py`. Each run used a scratch copy, two local servers (A and B) and only the named tests. On clean 484349f all 26 selected tests pass.
+
+| ID | Result |
+|---|---|
+| E19 (torn export) | killed: test_export_during_a_burst_is_a_consistent_snapshot, "round 0: exported balances disagree with exported payments {'b0': (1074, 1000), 'b4': (926, 1000)}" |
+| E04 (`last_ts` not restored) | killed: test_time_never_runs_backwards_after_importing_a_later_clock, "new timestamp 2026-10-04T08:44:00.749+00:00 is earlier than imported 2099-10-04 08:44:00.730000+00:00" |
+| D1 (test hooks at 64) | killed: test_reset_accepts_exactly_80_levels_of_nesting and test_import_nesting_limit_is_80_levels[80-levels], both "got 400 … nested deeper than 64 levels" |
+| D2 (test hooks accept 81) | killed: test_reset_at_81_levels_is_400_and_changes_nothing and test_import_nesting_limit_is_80_levels[81-levels], both "expected 400 malformed_request, got 204" |
+| E27 (track case-insensitive) | killed: test_rejected_import_changes_nothing[track in upper case], "expected 422 validation_failed, got 204" |
+
+The builder's 850f706 is a tests-only delta. It changes only test/w5-export-import.test.ts, and `git diff 484349f 850f706` over src, Dockerfile, package.json, .dockerignore and RUN.md is empty. Its builder tests (npm test 89/89 clean) kill all eight on their own:
+- E04: "new timestamps are never earlier than imported ones, even from a clock running ahead".
+- E19: "an export taken during a burst of payments is one consistent snapshot".
+- D1 and D2: "reset and import accept nesting up to 80 levels and refuse 81 with 400 (D38)". D1 is also killed by the 64-deep round trip.
+- E15, E18, E27 and E28, the recommended tests from my BLOCK entry: "rejects invalid imports and leaves the destination unchanged".
+
+This approval carries over to 850f706 once the verifier posts its rerun of the touched tests there.
