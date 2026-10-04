@@ -356,11 +356,11 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 
 | N | Spec | Normative line (condensed) | Plan | Tests | Status |
 |---|---|---|---|---|---|
-| N1 | §1 | Sum of balances always equals total seeded by last reset | I1 | | |
-| N2 | §1 | No balance negative, including transiently | I2 | | |
+| N1 | §1 | Sum of balances always equals total seeded by last reset | I1 | w2_load: one_wallet_drained_in_parts_by_fifty_payments, three_wallets_paying_around_a_cycle, conservation_across_fifty_wallets; support: I1 after every test | covered by c989868 |
+| N2 | §1 | No balance negative, including transiently | I2 | w2_load: every burst reads balances while it runs; support: I2 after every test | covered by c989868 |
 | N3 | §1 | A payment request moves money at most once | I3 | | |
-| N4 | §1 | Amounts are exact integer minor units | I9 | | |
-| N5 | §1 | Money moves only between existing wallets | I8 | | |
+| N4 | §1 | Amounts are exact integer minor units | I9 | w2_payments: large_balances_are_exact, integral_amount_forms_are_valid, payment_in_other_currencies | covered by c989868 |
+| N5 | §1 | Money moves only between existing wallets | I8 | w2_payments: handle_that_names_no_user_is_404, insufficient_funds_is_409_and_leaves_no_trace | covered by c989868 |
 | N6 | §2 | Dockerfile + RUN.md command builds and starts with no manual setup | W1.1 W1.2 | w1_container: stage_folder_has_dockerfile_and_run_md_and_no_git, run_md_gives_build_run_and_test_commands | covered by 16f24a6 |
 | N7 | §2 | Image runs alone with -e PORT and a port mapping; no runtime outbound network; deps and seed inside | W1.1 | w1_container: offline_image_serves_health_with_no_network_on_default_port, port_env_is_honoured_and_health_is_fast | covered by 16f24a6 |
 | N8 | §2 | 2 vCPU, 2 GiB, healthy within 60 s, 50 in flight, 5 s per request (10 s reset) | I11 W1.9 W2.4 | w1_container: service_works_within_the_resource_limits; w1_auth: fifty_concurrent_logins; w1_reset: a_thousand_users_with_distinct_passwords_reset_within_ten_seconds (money paths under load: W2) | covered by 16f24a6 |
@@ -374,51 +374,51 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | N16 | §3.4 | Unknown query parameters ignored | W1.3 W2.5 | w1_transport: unknown_query_parameters_are_ignored | covered by 16f24a6 |
 | N17 | §3.4 | Ids opaque, at most 64 characters | I28 | support: every id checked as 1..64 chars; w1_reset: invalid_fixture[user id 65 chars], valid_fixture_edges[user id of 64 chars] | covered by 16f24a6 |
 | N18 | §4 | One currency from the fixture; /me reports currency and minor_units | W1.7 | w1_reset: currency_and_minor_units_come_from_the_fixture; w1_auth: new_user_in_a_jpy_service_holds_zero_yen | covered by 16f24a6 |
-| N19 | §4 | 1000, 1000.0, 1e3 valid and equal; booleans and strings are not numbers | §3.4 W2.2 | | |
+| N19 | §4 | 1000, 1000.0, 1e3 valid and equal; booleans and strings are not numbers | §3.4 W2.2 | w2_payments: integral_amount_forms_are_valid, invalid_amount_is_422_and_moves_nothing, non_finite_or_fractional_raw_amount_is_422; w2_idempotency: numerically_equal_numbers_are_the_same_body | covered by c989868 |
 | N20 | §4 | Handle unique, ^[a-z0-9_]{1,20}$, never changes | I14 | w1_reset: invalid_fixture[duplicate handle, handle upper case, handle with dash, handle 21 chars, handle empty]; w1_auth: signup_ignores_a_handle_and_a_balance_in_the_body | covered by 16f24a6 |
 | N21 | §4 | Seeded users take the fixture handle | W1.4 | w1_auth: me_for_every_seeded_user | covered by 16f24a6 |
 | N22 | §4 | Signup derives handle (lowercase, non [a-z0-9_] to _, 20 chars); taken fails | W1.5 | w1_auth: handle_is_derived_from_the_local_part, taken_derived_handle_is_409_and_creates_no_account, truncation_collision_is_handle_taken | covered by 16f24a6 |
-| N23 | §4 | New users start at 0, can receive and be asked immediately | W1.7 | w1_auth: new_user_me_has_derived_handle_zero_balance_and_service_currency (receiving: W2; being asked: W3) | covered by 16f24a6 |
-| N24 | §4 | Payment moves money immediately and atomically, direct or by paying a request | I8 | | |
+| N23 | §4 | New users start at 0, can receive and be asked immediately | W1.7 | w1_auth: new_user_me_has_derived_handle_zero_balance_and_service_currency; w2_payments: new_user_can_receive_and_then_pay (being asked: W3) | covered by c989868 |
+| N24 | §4 | Payment moves money immediately and atomically, direct or by paying a request | I8 | w2_payments: payment_moves_money_both_ways (paying a request: W3) | covered by c989868 |
 | N25 | §4 | Request lifecycle; only payer pays/declines; only requester cancels | I4 | | |
 | N26 | §4 | Request may exceed payer balance; pay while short is 409 and changes nothing; payable later | W3.1 W3.2 | | |
 | N27 | §4 | Visibility belongs to the payment, chosen by the payer; requests have none and never appear in feeds | I5 I7 | | |
-| N28 | §4 | Feed iff public or caller is sender/receiver; no other rule | I5 | | |
+| N28 | §4 | Feed iff public or caller is sender/receiver; no other rule | I5 | w2_activity: feed_rule_for_sender_receiver_and_third_parties, new_user_sees_only_public_payments | covered by c989868 |
 | N29 | §4 | Requests never in feed; GET /requests only the caller's | I5 I6 | | |
 | N30 | §4 | Split not a feed item; its requests visible to their parties; fulfilling payments follow the feed rule | I5 W3.7 | | |
-| N31 | §4 | Visibility one value seen identically; private hidden from third parties only | I7 | | |
-| N32 | §4 | amount at most 1e9; balances within 2^53; exact arithmetic | I9 | | |
+| N31 | §4 | Visibility one value seen identically; private hidden from third parties only | I7 | w2_activity: private_payment_is_visible_to_both_parties_with_one_visibility, feed_items_equal_their_receipts_for_everyone_who_sees_them | covered by c989868 |
+| N32 | §4 | amount at most 1e9; balances within 2^53; exact arithmetic | I9 | w2_payments: maximum_amount_is_in_range, payment_that_would_push_a_balance_past_2_53_is_422, large_balances_are_exact | covered by c989868 |
 | N33 | §4 | Fixture format: currency, minor_units, users, payments, requests | W1.4 | w1_reset: reset_returns_204_with_no_body_and_seeds_users, valid_fixture_edges | covered by 16f24a6 |
 | N34 | §4 | Seeded users log in immediately | W1.5 | w1_reset: seeded_users_log_in_immediately, one_character_seeded_password_logs_in | covered by 16f24a6 |
 | N35 | §4 | Seeded balance is after seeded payments; no replay | W1.4 | w1_reset: seeded_payments_follow_the_feed_rule_and_representation (item 2) | covered by 16f24a6 |
 | N36 | §4 | Negative fixture balance: 422, nothing changes | I25 W1.4 | w1_reset: invalid_fixture_is_422_and_changes_nothing[negative balance (spec)] | covered by 16f24a6 |
 | N37 | §4 | minor_units 0, 2 or 3 (EUR, JPY, BHD) | W1.4 | w1_reset: invalid_fixture[minor_units 1, 4, string, fraction, missing], currency_and_minor_units_come_from_the_fixture | covered by 16f24a6 |
 | N38 | §5 | Every 4xx/5xx carries the envelope | I10 | support: envelope asserted by every expect_error | covered by 16f24a6 |
-| N39 | §5 | Error table codes and statuses | §3.3 | | |
-| N40 | §5 | Correct type, bad format or range: 422 | §3.4 | | |
-| N41 | §5 | amount/note/visibility type errors 422; omission gives defaults; other wrong types 400 | §3.4 | | |
-| N42 | §5 | Integer query params plain digits; 1e9, 4.0, +4 are 422 | §3.7 | | |
-| N43 | §5 | Key 1..255, limit 1..200, offset >= 0 on every endpoint taking them | §3.5 §3.7 | | |
-| N44 | §5 | No 5xx, including under concurrent load | I11 | w1_transport: signup_never_5xx_on_weird_values, five_mib_body_is_answered_not_dropped, garbage_request_line_gets_400_envelope (under load: W2) | covered by 16f24a6 |
+| N39 | §5 | Error table codes and statuses | §3.3 | w2_payments: error rows; w2_idempotency: missing_key_is_400_and_changes_nothing, same_key_different_body_is_409_and_changes_nothing | covered by c989868 |
+| N40 | §5 | Correct type, bad format or range: 422 | §3.4 | w2_payments: note_length_counts_code_points, invalid_amount_is_422_and_moves_nothing; w2_activity: invalid_paging_parameters_are_422 | covered by c989868 |
+| N41 | §5 | amount/note/visibility type errors 422; omission gives defaults; other wrong types 400 | §3.4 | w2_payments: non_string_note_is_422, visibility_other_than_public_or_private_is_422, invalid_amount_is_422_and_moves_nothing, wrong_type_to_handle_is_400, note_and_visibility_default | covered by c989868 |
+| N42 | §5 | Integer query params plain digits; 1e9, 4.0, +4 are 422 | §3.7 | w2_activity: invalid_paging_parameters_are_422 | covered by c989868 |
+| N43 | §5 | Key 1..255, limit 1..200, offset >= 0 on every endpoint taking them | §3.5 §3.7 | w2_payments: key_length_range; w2_idempotency: key_over_255_characters_is_422; w2_activity: invalid_paging_parameters_are_422, valid_paging_edges (requests listing: W3) | covered by c989868 |
+| N44 | §5 | No 5xx, including under concurrent load | I11 | w2_load: every_response_within_five_seconds_and_health_stays_responsive, mixed_valid_and_invalid_burst_has_no_5xx; w2_payments: payments_never_5xx_on_weird_values; w1_transport: weird values, oversized bodies | covered by c989868 |
 | N45 | §6 | Signup 201 {user_id, display_name, token} | W1.5 | w1_auth: signup_returns_201_with_exactly_user_id_display_name_token | covered by 16f24a6 |
 | N46 | §6 | Login 200 {user_id, display_name, token} | W1.5 | w1_auth: login_returns_200_with_user_id_display_name_token, login_after_signup_returns_the_same_user | covered by 16f24a6 |
 | N47 | §6 | email_taken 409; password < 8 422; email form 422; login 401; handle_taken 409 creates nothing | W1.5 | w1_auth: registered_email_is_email_taken_case_insensitively, password_length_in_code_points, email_must_be_local_at_domain, wrong_password_or_unknown_email_is_401, taken_derived_handle_is_409_and_creates_no_account | covered by 16f24a6 |
 | N48 | §6 | Bearer token on every endpoint except health, reset, signup, login (and export/import) | W1.6 | w1_auth: bad_or_missing_bearer_is_401 (every endpoint), signup_/login_ignores_an_invalid_authorization_header; w1_transport: health_ignores_an_invalid_authorization_header; w1_reset: reset_ignores_an_invalid_authorization_header | covered by 16f24a6 |
 | N49 | §6 | Tokens never expire; many tokens and sessions per account | I13 | w1_auth: every_issued_token_stays_valid, tokens_are_long_random_base64url | covered by 16f24a6 |
 | N50 | §6 | Password hashing; no plaintext | I12 | | |
-| N51 | §7 | Five write paths require Idempotency-Key | W2.3 W3.2 W3.6 W4.5 | | |
-| N52 | §7 | Key scoped to the user | I19 | | |
-| N53 | §7 | Replay = same user, method, path, body; other path is a first use | I19 | | |
-| N54 | §7 | Table: 400 missing, 201 first, 200 replay identical, 409 reuse, 4xx reuse is first use | I15 I16 I18 | | |
-| N55 | §7 | Same body = same JSON value after parsing | §3.9 | | |
-| N56 | §7 | Concurrent identical first use: one 201, others 200, effect once | I17 | | |
-| N57 | §7 | Replay returns original after resource changes; no further state change | I15 | | |
-| N58 | §7 | Claimed key resolved before validation and resource checks | I16 | | |
+| N51 | §7 | Five write paths require Idempotency-Key | W2.3 W3.2 W3.6 W4.5 | w2_idempotency: missing_key_is_400_and_changes_nothing (all five paths are marked by item; W3-W5 paths run with their items) | covered by c989868 |
+| N52 | §7 | Key scoped to the user | I19 | w2_idempotency: keys_are_scoped_per_user_on_payments | covered by c989868 |
+| N53 | §7 | Replay = same user, method, path, body; other path is a first use | I19 | w2_idempotency: same_key_on_every_path_is_independent, query_string_is_not_part_of_the_key_path, settlement_key_is_independent_of_other_paths_and_users | covered by c989868 |
+| N54 | §7 | Table: 400 missing, 201 first, 200 replay identical, 409 reuse, 4xx reuse is first use | I15 I16 I18 | w2_idempotency: missing_key_is_400..., replay_is_200_with_the_original_body_and_no_effect, same_key_different_body_is_409..., key_that_failed_with_4xx_is_a_first_use_later | covered by c989868 |
+| N55 | §7 | Same body = same JSON value after parsing | §3.9 | w2_idempotency: replay_with_reordered_keys_and_whitespace_is_a_replay, numerically_equal_numbers_are_the_same_body | covered by c989868 |
+| N56 | §7 | Concurrent identical first use: one 201, others 200, effect once | I17 | w2_idempotency: fifty_concurrent_identical_first_uses, concurrent_same_key_with_two_bodies_has_one_winner | covered by c989868 |
+| N57 | §7 | Replay returns original after resource changes; no further state change | I15 | w2_idempotency: replay_after_the_resource_changed_returns_the_original, replay_by_another_token_of_the_same_user | covered by c989868 |
+| N58 | §7 | Claimed key resolved before validation and resource checks | I16 | w2_idempotency: claimed_key_outranks_an_invalid_new_body, unparseable_body_with_a_claimed_key_is_400 | covered by c989868 |
 | N59 | §8 | GET /me shape | W1.7 | w1_auth: me_for_every_seeded_user, new_user_me_has_derived_handle_zero_balance_and_service_currency | covered by 16f24a6 |
-| N60 | §8 | POST /payments body, defaults, 201 shape | W2.1 | | |
-| N61 | §8 | POST /payments error table | W2.2 | | |
-| N62 | §8 | Debit and credit atomic; failed payment leaves no trace | I8 | | |
-| N63 | §8 | note verbatim, Unicode byte for byte | I20 | | |
+| N60 | §8 | POST /payments body, defaults, 201 shape | W2.1 | w2_payments: payment_201_has_exactly_the_payment_fields, note_and_visibility_default, private_visibility_is_kept | covered by c989868 |
+| N61 | §8 | POST /payments error table | W2.2 | w2_payments: insufficient_funds_is_409_and_leaves_no_trace, invalid_amount_is_422..., paying_your_own_handle_is_self_payment, note_length_counts_code_points, visibility_other_than_public_or_private_is_422, handle_that_names_no_user_is_404, precedence tests | covered by c989868 |
+| N62 | §8 | Debit and credit atomic; failed payment leaves no trace | I8 | w2_payments: payment_moves_money_both_ways, insufficient_funds_is_409_and_leaves_no_trace; w2_load: feed_matches_the_successful_payments_after_a_burst | covered by c989868 |
+| N63 | §8 | note verbatim, Unicode byte for byte | I20 | w2_payments: note_round_trips_verbatim_everywhere, note_length_counts_code_points | covered by c989868 |
 | N64 | §8 | POST /requests 201 shape; caller is requester | W3.1 | | |
 | N65 | §8 | POST /requests error table | W3.1 | | |
 | N66 | §8 | Payer balance not checked at request creation | W3.1 | | |
@@ -433,7 +433,7 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | N75 | §8 | Split response: shares (all, in order, sum) and requests (non-callers, in order) | W3.6 | | |
 | N76 | §8 | Split error table | W3.6 | | |
 | N77 | §8 | Caller-only split valid with requests []; no balance checks | W3.6 | | |
-| N78 | §8 | GET /activity: feed rule, newest first, paging as /requests | W2.5 | | |
+| N78 | §8 | GET /activity: feed rule, newest first, paging as /requests | W2.5 | w2_activity: feed_rule_for_sender_receiver_and_third_parties, feed_is_newest_first_in_creation_order, paging_with_limit_offset_and_has_more, default_limit_is_50, empty_feed, invalid_paging_parameters_are_422, activity_ignores_other_parameters | covered by c989868 |
 | N79 | §9 | Shares whole, sum, differ by 1, larger first; table rows | I21 | | |
 | N80 | §9 | Order moves the extra unit; zero share legal and gets a request | W3.6 | | |
 | N81 | §9 | Splits independent; balances sum to seeded total after splits paid | I1 W3.6 | | |
