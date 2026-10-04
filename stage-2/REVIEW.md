@@ -300,3 +300,171 @@ My reruns on 54acbcd used suite a32f7a8, local servers and `test_w8_export_impor
 | E32 | Killed by `test_a_partly_captured_hold_larger_than_the_total_round_trips`: the same 422 on the first import |
 
 The block is resolved. E31 and H02 stay recorded as above, and every other W8 finding stands.
+
+## W9, W10, W11: BLOCKED @ 5f9781a1f533075861f0ba5afc30e65b8a51a289
+
+The verifier's PASS is on 5f9781a with suite 5e17085:
+- `run.sh --upto 11`: 1983 passed;
+- `npm test`: 150 passed;
+- the supplied checks, host and isolated, claim stage 2.
+
+I reviewed:
+- the server's UI routes (`src/ui.ts`, `src/app.ts`);
+- every UI file (`ui/assets/*.js`, `app.css`, `index.html`);
+- the W9.5 builder tests and RUN.md;
+- the screenshots of every named state.
+
+I broke the state rules of plan 3.14 one at a time in scratch copies, then ran:
+- the suite's browser files at w1280 (`test_w9_session`, `test_w10_*`, `test_w11_*`; 188 tests, local servers);
+- critic probes on a scratch copy of the suite (`.work/critic-h6bj/accprobe/test_critic_probe.py`, `rerun_ui.py`, logs in `rerun_logs_ui/`).
+
+### Reason 1 (builder): a 2xx with an empty body throws and shows nothing
+
+`ui/assets/api.js:76` reads an empty body as `null` and returns `ok` for any 2xx. Each money form's success message then reads the null body and throws:
+- `wallet.js:82` (pay) and `:110` (request);
+- `holds.js:43-47` (authorize);
+- `split-screen.js:71-76` (split).
+
+Probe P1 on clean 5f9781a: the payment commits, then the page gets 201 with an empty body. After 1.5 s:
+- none of `pay-uncertain`, `pay-success` or `pay-error` is shown;
+- the page error is "Cannot read properties of null (reading 'amount')";
+- the data is not re-read: `wallet-available` still shows 100.00 EUR, but the server holds 85.00.
+
+Broken: 3.14 Outcomes ("a body that is not JSON is an unknown outcome: show the uncertain element, never the error element"; "After an unknown outcome it re-reads the data too") and I42 ("unreadable body"). A load answered 2xx with an empty body fails the same way, through `showUser(null)`. The UI makes no call that expects an empty 2xx, so a 2xx whose body is empty, or is not a JSON object, can count as unknown.
+
+### Reason 2 (builder): the uncertain message of a capture or a request payment does not say what 3.15 asks
+
+3.15: "uncertain (amber message saying the money may have moved and that retrying without changes is safe)". Capture and paying a request move money. Their uncertain element shows `UNCERTAIN_ACTION_TEXT` (`kit.js:118-119`, used by `holds.js` and `requests.js`): "We could not confirm whether this went through. The list has been refreshed; if nothing changed, try again." It says neither thing. Seen in authorizations-capture-uncertain and requests-uncertain at both widths (screenshots 5f9781a and 92d940d). Decline, cancel and void move no money and may keep a neutral text. The pay, request, split and authorize forms use `UNCERTAIN_TEXT`, which says both.
+
+### Reason 3 (verifier): eight state and layout rules can break with every test passing
+
+Each mutant is one change in `ui/assets`. Each passes the 188 browser tests at w1280, the same as clean: 188 passed, plus one setup error on every run (the W10.7 stage-1 upgrade test needs `--previous-base-url`, which these runs did not start). Each critic probe passes on clean and fails on its mutant for the mutated reason:
+
+| Mutant | Change | Rule | Probe: clean, then mutant |
+|---|---|---|---|
+| U01 | `TIMEOUT_MS` 4000 becomes 1500 | D43 "no response within 4 s" | P4, a payment answered at 2.8 s: `pay-success`, then `pay-uncertain` (aborted at 1.5 s), so the user is told the money may have moved |
+| U02 | `TIMEOUT_MS` becomes 5500 | D43 (below the 5 s `expect()` of the supplied checks) | P5, no answer: `pay-uncertain` after 4.38 s, then nothing within 4.7 s. The suite's test allows 6 s. |
+| U04 | Any 4xx is a refusal, envelope or not (`api.js:83`) | D43 "Only a 4xx with the envelope is a confirmed refusal" | P6, the payment commits, then 429 `{"message": ...}`: `pay-uncertain`, then `pay-error` while the money moved (balance 8500) |
+| U05 | A stale load's failure is still shown (`kit.js:54-67`) | I44 "A load's response (or failure) is shown only if no later load ... has been shown" | P2, the first refresh's `/me` unanswered, a second refresh applied, then the first times out at 4 s: no `load-error`, then `load-error` |
+| U06 | No de-duplication across pages (`api.js:101`) | D64 "keeps each item once (de-duplicated by id, since pages may shift under concurrent writes)" | P3, 60 payments, one new payment between page 1 and page 2: 60 items once, then 61 with `activity-item-p_010` twice |
+| U23 | The capture input is not re-filled after a re-read (`holds.js:96`) | 3.14 `authorization-capture-amount-{id}` "pre-filled with the remaining amount"; the retry rule's "capture amount the page re-filled after a re-read" | P10: bob's other device captures 4.00 of a 10.00 hold, and Collect (10.00) is refused. Clean re-fills 6.00 and the next click captures; the mutant keeps 10.00 and is refused again. |
+| U30 | A failed later page is dropped and the rest shown as the whole list (`api.js:112`) | 3.14 `load-error` "Shown when a data load fails"; D64 "The page shows every item" | P7, page 2 of `/activity` fails: `load-error`, then 50 items and no `load-error` |
+| U40 | A note no longer wraps (`app.css` `.note`) | 3.15 "long ... notes wrap or truncate"; I46 "no route in any named state scrolls horizontally" | P11 (`accprobe/test_critic_probe_long.py`), the longest note (200 characters, no spaces), display names (100) and handles (20) at 375: `scrollWidth` 375, then 3067 on `/`, `/requests` and `/authorizations`. The suite ran at w375 for this one: 188 passed. |
+
+### Missing evidence
+
+Builder:
+1. A 2xx whose body is empty or not a JSON object is an unknown outcome (`api.js`), so each form shows its uncertain element and re-reads.
+2. The uncertain message of a capture and of a request payment says that the money may have moved and that retrying without changes is safe.
+
+Verifier: tests that fail on these, at both widths where the layout is not the point. The probes in `.work/critic-h6bj/accprobe/test_critic_probe.py` are a starting point, not suite code:
+1. P1: a fault kind "empty-after" (commit, then 201 with an empty body) in `test_lost_payment_shows_pay_uncertain_and_an_unchanged_retry_pays_once`. Expect `pay-uncertain`, the re-read showing the payment, and an unchanged retry that pays once. Do the same for the request, split and authorize forms.
+2. U01 and U02: the 4 s limit from both sides:
+   - an answer held 2.8 s then released is `pay-success`, with no uncertain element at 2.8 s;
+   - no answer shows `pay-uncertain` within 4.7 s of the click.
+3. U04: a 4xx with a JSON body but no envelope, after the commit, shows `pay-uncertain`, not `pay-error`.
+4. U05: a refresh whose load times out after a later refresh applied leaves `load-error` absent.
+5. U06: a payment created between the first and second page reads leaves every `activity-item-*` once (the `/activity?` route is enough).
+6. U23: with the remainder changed by another client, a refused capture re-fills the input with the new remainder, and the next unchanged click captures it.
+7. U30: a failed later page of `/activity` (and of `/requests` and `/authorizations`) shows `load-error`, not a short list.
+8. U40: the I46 checks with the longest content at 375: a 200-character note with no spaces, a 100-character display name and a 20-character handle. Expect no horizontal scroll on `/`, `/requests`, `/authorizations` and `/split`.
+
+### Mutants (13 on 5f9781a; `.work/critic-h6bj/mutants_ui.json`, logs `log_ui_*.txt`, `log_css_*.txt`, `rerun_logs_ui/`)
+
+- Survive with an observable effect: U01, U02, U04, U05, U06, U23, U30, U40 (the table above).
+- U42 (the header's display name loses its ellipsis) causes no page scroll with a 100-character name. Not pursued.
+- U09 survives and is equivalent in practice. It drops the "body differs" rule from `RetryIdentity`, which then mints keys only on input or change events. The forms' bodies change only through those events. A re-filled capture amount could reuse only a key the server never claimed, because the UI's captures are final and a claimed key means the hold has closed.
+- Controls, killed for the mutated reason:
+  - U08 (a stale load's data applied) by `test_latest_refresh_wins_when_the_earlier_one_answers_last` ("expected 10500, actual 10300") and `test_a_write_reload_beats_a_slow_earlier_refresh`;
+  - U10 (a capture's uncertain never clears) by `test_capture_lost_after_commit_shows_the_confirmed_state` and `test_void_lost_after_commit_shows_the_confirmed_state` (`authorization-uncertain` stays);
+  - U11 (a request action's uncertain never clears) by `test_pay_lost_after_commit_shows_the_confirmed_state` and `test_decline_lost_after_commit_shows_the_confirmed_state` (`request-uncertain` stays).
+
+### Clause map (W9-W11)
+
+| Clause | Code at 5f9781a |
+|---|---|
+| 3.14 routes: the shell on `/`, `/split`, `/signup`, `/login`; `/requests` and `/authorizations` only for `text/html`; assets with type and nosniff; the HTML 404 | `src/ui.ts:35-67`, `src/app.ts:55-66` |
+| `Accept` lists `text/html` (q not 0, `*/*` does not count) | `src/ui.ts:41-50` |
+| HTML headers and CSP; favicon suppressed | `src/ui.ts:10-20`, `ui/index.html:8` |
+| D41: token in `localStorage`; Bearer and `Accept: application/json` on every call | `api.js:11-46`, `:53-58` |
+| D65: a 401 to a call that sent the token ends the session, with a notice; sign-in refusals show `auth-error` | `api.js:84-85`, `app.js:126-131`, `auth.js:24-27` |
+| Signed out, the four routes show `/login`; `/login` and `/signup` always render; logout | `app.js:95-106`, `:82-85` |
+| Header and navigation, `aria-current` | `app.js:47-71` |
+| D44 amounts; D45 handles; notes of at most 200 code points, no `maxlength`; `type="text" inputmode="decimal"` | `money.js:20-40`, `split.js:13-30`, `wallet.js:14-15`, `kit.js:187-189` |
+| D42 retry identity (128-bit key; new key on input or change, or when the body differs) | `retry.js:6-37`, `kit.js:132-171`; request pay keys `requests.js:20, 61-64`; capture `holds.js:89-110` |
+| D43 outcomes: ok, refused (4xx with envelope), unknown (network, abort, 4 s, 5xx, not JSON) | `api.js:53-89` (Reason 1: the empty body at `:76`) |
+| Re-read after the response, never before; uncertain kept until a retry resolves it; item actions confirmed by the re-read | `kit.js:156-168`, `requests.js:29-59`, `holds.js:77-130` |
+| I44 latest wins per resource; data clears `load-error`; 4 s for loads | `kit.js:15-79` |
+| D63: `wallet-refresh` and `load-retry` never disabled | `wallet.js:27-29`, `kit.js:33` |
+| D64: bare first read, then `offset`/`limit=200` while `has_more`, de-duplicated | `api.js:93-119` |
+| I45 element contract (`wallet-held` at 0, `empty-*`, buttons only where allowed, `authorization-captured-*` only when captured) | `kit.js:200-220`, `wallet.js:47-56`, `requests.js:68-114`, `holds.js:132-194` |
+| I48: text only (no `innerHTML`; no inline style) | `dom.js:6-27` |
+| W9.5 builder tests (amounts, split rule, retry identity, routes) | `test/w9-ui.test.ts` |
+| W9.6 RUN.md | `RUN.md` (image, UI routes, `npm test`, the suite with its Playwright venv and frozen `stage-1/`, supplied checks with `--stage 2`) |
+
+Every clause has code. The only product defect is the empty 2xx body (Reason 1).
+
+### Presentation (all 45 named states at both widths, 5f9781a and 92d940d)
+
+- Reason 2 is the one presentation block.
+- Everything else in 3.15 holds:
+  - `available` is the headline, with total and held secondary and labelled;
+  - status has text and colour, and private payments have a lock and the label;
+  - direction is from the viewer's side, with parties as handles and "(you)" beside them;
+  - times are in `<time>`, and no ids are shown;
+  - the loading, refused, uncertain, empty and success states look distinct;
+  - one column below 720 px, two on `/` from 960 px, tabs at 375 px;
+  - every input and select has a visible label, actions are buttons and navigation is links.
+- The longest names, handles and notes (P11) never scroll the page, at 375 or 1280, on 5f9781a or 92d940d.
+- Consistent with the contract, so not defects:
+  - `wallet-held` is absent at 0;
+  - `pay-success` stays while the request form shows its own result ("until the form changes or is submitted again");
+  - item actions have no success element, because the contract defines none and the item's new status is the confirmation.
+- Polish, recorded only:
+  - the request and split forms' uncertain text says the money may have moved, though a request moves none;
+  - a refused alert whose text wraps puts its icon on a line of its own (wallet-pay-refused, authorizations-authorize-refused, signup-refused-w375);
+  - card padding and heading sizes vary (not-found-signed-in, the top card of requests-empty);
+  - the Collect button is shorter than its input.
+
+### Other checks
+
+- Special-casing grep over `ui/assets`, `src/ui.ts` and `src/app.ts`: only placeholder and hint text names sample people. No fixture ids or handles, no test-environment checks.
+- No `innerHTML`, `insertAdjacentHTML`, `eval` or inline style anywhere in the UI.
+- No server state changes in W9–W11 beyond ace399c (the JSON 404 no longer echoes the path).
+
+## W13: BLOCKED @ 92d940dc8ea4774a1592a8ed09b9544bc60b51a4
+
+The verifier's PASS is on 92d940d with suite dbfa681:
+- `run.sh --upto 13`: 1986 passed;
+- `npm test`: 150 passed;
+- the supplied checks, host and isolated, claim stage 2.
+
+The PASS carries over to suite a32f7a8, a tests-only delta (`test_w8_export_import.py`, 29 passed on 92d940d). W13 changes `requests.js`, `holds.js` and `app.css` only. The code does what W13.1–W13.3 ask:
+- an incoming request is `item out`, with the label "Asks you to pay";
+- an outgoing request is `item in`, with the label "You asked to be paid";
+- the facts and controls are full-width rows, and `.mono.instant` has `nowrap` with a scroll box of its own;
+- the button reads "Collect" under "Amount to collect".
+
+The optional change, an action's messages placed at their item with a fallback above the list, keeps every testid and its presence rule.
+
+### Reason: two of the three criteria can be undone with every test passing
+
+Mutants on 92d940d against suite a32f7a8's `test_w13_presentation.py` (`mutants_w13.json`, `log_w13.txt`; clean: 3 passed):
+
+| Mutant | Change | Result |
+|---|---|---|
+| W13a | An incoming request coloured as money in again | Killed by `test_an_amount_the_viewer_would_pay_is_not_coloured_as_money_received` [w375, w1280]: "the amount ada would pay is drawn in rgb(22, 101, 52), the colour of a received payment" |
+| W13b | `.mono.instant` may wrap (`white-space: normal; overflow-wrap: anywhere`) | 3 passed. The W13.2 test seeds a 32-character expiry, which fits one line in the new full-width row with or without `nowrap`. Probe P8 (`accprobe13/test_critic_probe_w13.py`) seeds the longest expiry a fixture allows (64 characters) at w375: clean, one line (21 px at a 21 px line height), inside the viewport, no page scroll; W13b, two lines (42 px). |
+| W13c | The button says "Capture" again under "Amount to collect" | 3 passed; no test reads W13.3. Probe P9: the button's text appears in its input's label on clean ("collect" in "amount to collect"), not on W13c ("capture"). |
+| W13d | The outgoing label is "You asked" again | 3 passed. "The label says which way the money would go" is wording, which D58 leaves to the screenshot review. The 92d940d screenshots show "Asks you to pay" and "You asked to be paid". Recorded, not blocking. |
+
+### Missing evidence (verifier)
+
+The product needs no change. A rerun of the touched file on 92d940d carries the PASS over. Tests needed:
+1. W13.2 at its boundary: a seeded `expires_at` of 64 characters at 375 px stays on one line (height within 1.5 line heights), inside the card, with no horizontal page scroll.
+2. W13.3: on an incoming open hold, the capture button's text appears in the label of `authorization-capture-amount-{id}` (ignoring case), at both widths.
+
+Polish, recorded only:
+- a cancelled outgoing request's amount is now green, though nothing will arrive (requests-success);
+- an item's own messages sit 4 px under its controls, where form messages sit 12 px under (requests-refused, authorizations-capture-refused);
+- the place-hold confirmation still says "until @… captures it" (authorizations-success).
