@@ -1,0 +1,356 @@
+# Stage 3 plan — Pocketful: statements and payment corrections
+
+Owner: planner (`planner-h6bf`). Repository: `/Users/Dileepa/dark-factory-v3`, folder `stage-3/`, which started as a copy of the accepted `stage-2/` (`scripts/new-stage.sh 3`, commit 7233177).
+Specification: `/Users/Dileepa/df-spec/pocketful/spec/stage-3.md`, plus every part of `stage-1.md` and `stage-2.md` that stage 3 does not change. All three are pasted verbatim into the handoff.
+Supplied checks (a partial sample, about 9% of the graded stage-3 checks, used only to wire the service up): `/Users/Dileepa/df-spec/pocketful/test/stage_3/`. The stage-1 and stage-2 checks also run against this folder.
+Frozen references: `stage-1/` (accepted at 4baf8d9) and `stage-2/` (accepted at f9eed3a), each with its `PLAN.md`. Never edit them. Building them read-only, for example as the previous services in the upgrade tests, is fine.
+
+## Status
+
+| Item | Owner | Title | State | Commit |
+|---|---|---|---|---|
+| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | PLANNED | — |
+| W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | PLANNED | — |
+| W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | PLANNED | — |
+| W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | PLANNED | — |
+| W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | PLANNED | — |
+
+Item numbers continue from stage 2 (W1–W13). States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
+
+## 0. How this stage runs
+
+- The builder takes W14 to W17 in order and hands off each one as soon as its gate is green, then starts the next. The verifier writes W18 at once from this plan and the specification, without reading the implementation. The critic reviews this plan now (one batch), then each handoff.
+- Routing, as in stages 1 and 2. Builder: `HANDOFF Wn` to the verifier, the critic and the planner. Verifier: PASS or FAIL to the critic and the planner, and to the builder on FAIL. Critic: APPROVED or BLOCKED to the planner, and to the builder on BLOCKED. The planner marks an item ACCEPTED when a PASS and an APPROVED name the same commit. Questions go to the planner, who decides.
+- A verdict covers the item handed off plus every earlier item. For Wn the verdict run is: the offline build and run, the builder's tests, every acceptance test marked for W1 to Wn (the stage-1 and stage-2 regression tests carry items 1 to 13 and always run), and the supplied checks for stages 1, 2 and 3. Supplied stage-3 checks that need a later item are expected failures, listed by name in the verdict; every other failure counts. From W17 on, everything counts.
+- Check command (a new `--out` every run; seat letters b builder, v verifier, c critic, p planner). The harness also builds the frozen `stage-1/` and `stage-2/` as the previous services for the upgrade checks:
+  `/Users/Dileepa/dark-factory-v3/scripts/harness.sh run --track pocketful --repo <repo or worktree> --stage 3 --out /Users/Dileepa/dark-factory-v3/.work/checks/s3-<letter><nn>`
+- Final check (verifier, on the final commit, main repository, clean tree):
+  `/Users/Dileepa/dark-factory-v3/scripts/harness.sh run --track pocketful --repo /Users/Dileepa/dark-factory-v3 --stage 3 --mode isolated --out /Users/Dileepa/dark-factory-v3/.work/checks/s3-final-<nn>`
+  The target line is `claimed stage: 3 on the shipped checks`. The stage-4 suite runs as an overshoot probe and must fail.
+- The acceptance suite uses the harness venv's interpreter, `~/df-spec/.venv/bin/python`, as before. The stage-2 browser tests keep running as regression tests: the UI does not change in this stage (D77), so the full browser pass at 375 and 1280 is required at the W17 verdict and the final run; earlier verdicts may run it at one width.
+- Verdict runs use a clean worktree of the named commit: `git -C /Users/Dileepa/dark-factory-v3 worktree add /Users/Dileepa/dark-factory-v3/.work/<handle>/wt-<short-hash> <commit>`, passed as `--repo`.
+- Offline check (D2): `docker build --network=none -t pf-<seat>-s3 <path>/stage-3`, then `docker run -d --name pf-<seat>-s3 --network=none pf-<seat>-s3`, then `docker exec pf-<seat>-s3 node -e "fetch('http://127.0.0.1:8080/health').then(r=>r.text()).then(console.log)"`.
+- Shared machine: container names `pf-<seat>-…`; host ports builder 18100–18199, verifier 18200–18299, critic 18300–18399, planner 18400–18499. Before a verdict run the verifier asks the other seats to start no container runs until the verdict is posted.
+- Time marks in tests come from the service (`created_at`, `recorded_at`, `expires_at`), never from the host clock (protocol, "Shared machine and clocks").
+- Commits: only your own paths, `git commit -m "<message>" -- <paths>`; never `git add -A` or `git commit -a`; if `.git/index.lock` exists, wait and retry. Never amend, rebase or force-push. Scratch files go under `.work/<your handle>/`.
+- Room: this stage runs in room 7884df0c-298f-4120-abce-f6bef24337b9, as stages 1 and 2 did (D78).
+
+## 1. Look-ahead: what stage 4 needs from stage 3's outputs
+
+Stage 4 must import exports from stages 1 to 3 "retaining settlement membership, corrections and snapshots", and "earlier snapshot tokens continue to page their frozen entries" after refunds and batch corrections; refunds are bounded by "the payment's current corrected amount". So the stage-3 export carries every payment with its full revision list (revision number, amount, `effective_at` exactly as given, `recorded_at`, `reason`, and the creation-sequence number at which the revision was recorded), settlement membership and `committed_at`, each user's opening balance, every snapshot (token, owner, window bounds, `known_at`, and the creation-sequence cutoff that freezes it) and the correction idempotency records, besides everything stage 2 exported. A snapshot is defined by its cutoff rather than by a copy of its entries (D73), so it stays reproducible as long as revisions are only ever appended.
+
+Nothing from stage 4 is built here: no refunds and no `refund_of`, no correction batches and no `correction_batch_id`, no operator corrections, no correction of settlement members.
+
+## 2. Invariants
+
+Each one is a check a test can perform. "Every read" includes reads taken during a concurrent burst. Stage 2's I1–I49 still hold, amended where marked; I50–I66 are new.
+
+- **I1 Conservation (amended).** After every operation, corrections included, the sum of `GET /me` `total` over all users equals the total seeded by the last reset (after an import, the total in the imported state). The same holds in every historical view: for any `as_of` and `known_at`, the sum over all users of `total` in `GET /me?as_of=…&known_at=…` equals that total.
+- **I2 Non-negative (amended).** No current read shows a negative `total`, `available` or `held`, and `held ≤ total`. For a seeded history that is consistent and nonnegative (the specification's promise for fixtures), no historical view shows a negative `total` or `available` either, and no accepted correction creates one (I58).
+- **I15–I19 Idempotency (amended).** As stage 2, on eight paths: the seven of stage 2 and `POST /payments/{id}/corrections`.
+- **I25 Reset and import atomicity (amended).** A rejected reset or import changes nothing; an accepted one replaces all state, revisions, opening balances and snapshots included. A reset or import invalidates every earlier snapshot token not present in the new state.
+- **I26 Export snapshot (amended).** As stage 2, and the export includes every revision, every opening balance and every statement snapshot.
+- **I29 Time and order (amended).** `GET /activity`, `GET /requests` and `GET /authorizations` are newest first by `created_at` compared as instants (a seeded `created_at` may use another offset or precision), ties later-created first. Timestamps issued by the service strictly increase from one write to the next, so only the records of one write (a settlement's members, a split's requests) and seeded records share an instant.
+- **I37 Upgrade (amended).** Unchanged exports from the frozen stage-1 and stage-2 builds import into stage 3 with 204, and everything stage 2's I37 promises holds afterwards, read through stage 3 (I65).
+- **I50 Payment instants.** Every payment representation carries `created_at`, an RFC 3339 instant with an offset. A seeded `created_at` comes back exactly as the fixture wrote it; an omitted one is the reset's timestamp, which is not later than the `created_at` of any payment created through the API afterwards. A seeded `created_at` (payment or authorization) later than the reset's time is 422 `validation_failed` and changes nothing.
+- **I51 Opening balance.** A user's opening balance is the seeded `balance` minus the net effect of that user's seeded payments at their original amounts, and 0 for an account made by signup. Corrections never change it. `GET /me?as_of=<an instant before the user's earliest payment>` returns it as `balance` and `total`.
+- **I52 `as_of`.** `GET /me?as_of=T` returns as `balance` and `total` the opening balance plus the effect of every one of the caller's payments whose (selected) effective time is at or before T; a payment at exactly T counts. T at or after the latest effective time gives the current total. The response carries `as_of` exactly as sent. Without `as_of` and `known_at` the response is stage 2's Me, unchanged, with no `as_of` or `known_at` field.
+- **I53 Instant parameters.** `as_of`, `known_at`, `from`, `to`, a correction's `effective_at` and a seeded `created_at` accept exactly the grammar of section 3.4. Anything else, including a naive local time, a bare date, an empty value, more than 64 characters or an impossible date or time, is 422 `validation_failed`.
+- **I54 Statement arithmetic.** In every `GET /statement` response: `opening_balance` is the balance immediately before `from`, `closing_balance` the balance immediately before `to`; `opening_balance` plus every `delta` of the full window equals `closing_balance`; each entry's `balance_after` is the running balance after it in full-window order; entries are ordered by effective time ascending, then payment id ascending; the window is half-open, `[from, to)`; only payments the caller sent or received appear, whatever their visibility; a sent payment's `delta` is negative and a received one's positive; a zero-amount entry has `delta` 0. Paging never changes `opening_balance`, `closing_balance` or any `balance_after`, and `has_more` is exact.
+- **I55 Snapshot stability.** The first `GET /statement` of a window returns a `snapshot` token. `GET /statement?snapshot=<token>&limit=&offset=` returns slices of exactly that first result, whatever happens afterwards: payments, request payments, settlements, corrections, authorizations, captures, voids and expiries. `from`, `to` or `known_at` with a snapshot is 422; an unknown token, another user's token or a token from before a reset is 404.
+- **I56 Revision history.** Every payment has revision 1: its original amount, `effective_at` and `recorded_at` both equal to its `created_at`, `reason: ""`. A correction appends revision n + 1 and never changes an earlier one. A payment's `recorded_at` values strictly increase. `GET /payments/{id}/revisions` lists every revision in order to the payment's two parties, and is 404 for anyone else (public payments included) and 401 without a token.
+- **I57 Correction money.** An accepted correction moves the difference between the new amount and the previous revision's amount between the payment's two wallets in one step: an increase debits the sender and credits the receiver, a decrease debits the receiver and credits the sender. No other wallet changes, and parties and visibility never change. The original payment representation, its feed item and every stored idempotent response stay exactly as they were. A rejected correction changes nothing and claims no key.
+- **I58 Historical overdraft.** After any accepted correction, for both parties, `total` and `available` are at least 0 at every instant up to now at which any of their payments takes effect or any of their holds changes, under the latest revisions, with all movements at one instant combined. A correction that would break this is 409 `historical_overdraft`, unless its current debit is unaffordable, which is 409 `insufficient_funds` first.
+- **I59 `known_at`.** For `known_at=K` each payment is represented by its latest revision recorded at or before K; a payment with no such revision contributes nothing. Effective times then decide as for `as_of` and statement windows. Omitted, it means every revision recorded before the read began. K may be in the future. The response carries `known_at` exactly as sent.
+- **I60 Historical holds.** In `GET /me?as_of=T&known_at=K` all four money fields describe one view: `balance == total`, `available == total − held`, and `held` is what the caller's outgoing authorizations held at T as known at K (section 3.8). Without `as_of`, T is the instant the read began. For T in the future, an open hold counts until its deadline and not after.
+- **I61 `closed_at`.** Every authorization representation carries `closed_at`: null while open; the event's issued time when a void, a final capture or a capture of the whole remainder closed it; `expires_at`, exactly as stored, when the clock expired it; the reset's timestamp for an authorization seeded as `captured`, `voided` or `expired`.
+- **I62 Linked payments are immutable.** A correction of a capture (a payment with a non-null `authorization_id`) or of a settlement member (a non-null `settlement_id`) is 422 `linked_payment_immutable` and changes nothing.
+- **I63 Concurrent corrections.** Concurrent corrections of one payment with the same `expected_revision` have exactly one winner; each of the others is 409 `stale_revision`, or a 200 replay when it repeats the winner's key and body.
+- **I64 Money movements only.** Statements contain payments only. Authorization creation, release, void and expiry are never entries; each capture is exactly one entry, with its `authorization_id`.
+- **I65 Upgrade to stage 3.** After importing an unchanged stage-1 or stage-2 export: every payment reads as revision 1 at its `created_at`; each user's opening balance is the imported `balance` minus the net of all that user's payments; holds and captures from a stage-2 export have their history (creation, captures, close); replays, tokens and logins work; pending requests are payable; new corrections work on imported payments and imported captures and settlement members are immutable. A stage-3 export round-trips with revisions, opening balances, snapshots (their tokens keep paging the same results) and correction keys.
+- **I66 Earlier behaviour (inferred).** Every stage-1 and stage-2 check still passes, the stage-2 UI included. The only change to an existing representation is the new `closed_at` on authorizations.
+
+## 3. Interface contract
+
+Stage 2's contract (`stage-2/PLAN.md` section 3, which builds on `stage-1/PLAN.md` section 3) applies unchanged except where this section amends it. Amended or new text is marked (S3).
+
+### 3.1 Runtime
+
+- As stage 2, with `stage-3/Dockerfile` and build context `stage-3/`. (S3) The Dockerfile's comment names stage 3.
+
+### 3.2 Transport and parsing
+
+- As stage 2. (S3) In the query string, the values of `as_of`, `known_at`, `from`, `to` and `snapshot` are percent-decoded only: a literal `+` stays a plus sign rather than becoming a space (D79). Every other query parameter keeps stage 1's parsing. The first occurrence of a repeated parameter is used (D25); unknown parameters are ignored.
+
+### 3.3 Error codes (S3: complete for stage 3)
+
+Stage 2's codes plus: 409 `stale_revision`, 409 `historical_overdraft`, 422 `linked_payment_immutable`.
+
+### 3.4 Instants (S3, D66)
+
+- Grammar: `^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$`, at most 64 characters, with a valid calendar date (Gregorian leap years), hour 00–23, minute 00–59, second 00–59 (no leap second), and offset hours 00–23 and minutes 00–59. `-00:00` means UTC. Anything else, an empty value included, is 422 `validation_failed`.
+- Instants are compared exactly, at every fraction digit given; nothing rounds or truncates them. (For example: whole seconds since the epoch as an integer, then the fraction digits compared as a decimal.)
+- A client-supplied instant (`as_of`, `known_at`, a correction's `effective_at`, a seeded `created_at`) is stored and returned exactly as written. Service-issued times keep stage 1's form `YYYY-MM-DDTHH:MM:SS.sss+00:00`.
+- The same exact comparison applies to `expires_at` (stage 2 stored it verbatim; it is now also compared at every digit).
+
+### 3.5 Time (S3, D67)
+
+- The service clock is stage 2's (D49): an operation's `now` is the later of the wall clock and the state's last issued timestamp, taken once at its start.
+- (S3) Every write that records a time issues one timestamp, strictly later than the previous one issued: the later of the wall clock and the previous issued timestamp plus one millisecond. Every record the write creates uses that one timestamp (the members of one settlement share it, as do the requests of one split). So two writes never share a `created_at` or `recorded_at`, and a correction's `recorded_at` is always later than its payment's previous one (D67).
+- A read's instant R is its `now`. Every payment, revision and hold event recorded before the read began has a time at or before R. An omitted `as_of` means R (inclusive). An omitted statement `to` is R plus one millisecond, so a payment issued in the same millisecond as the read is inside the default window `[from, to)`.
+- An omitted `known_at` means every revision recorded before the read began; it applies no time test.
+- A correction's `effective_at` must be at or before the operation's `now`; there is no tolerance (D81).
+
+### 3.6 Representations (S3)
+
+- Me: unchanged when neither `as_of` nor `known_at` is sent. With either one, the same fields, all four money fields describing the view of section 3.8, plus `as_of` (only when sent, exactly as sent) and `known_at` (only when sent, exactly as sent).
+- Payment: unchanged, stage 2's thirteen fields. Outside a statement a payment always shows its original amount (revision 1): the feed, every replay, request payments, settlement and capture responses. In a statement entry, `amount` is the selected revision's amount; every other field is unchanged.
+- Authorization: stage 2's fields plus `closed_at` (I61, D71). A stored replay body is returned verbatim, so a replayed stage-2 authorization or capture body has no `closed_at` (D54).
+- Revision: `{"payment_id", "revision", "amount", "effective_at", "recorded_at", "reason"}`. The correction's 201 body is the new revision. Revision 1 has the payment's original amount, `effective_at` and `recorded_at` both equal to the payment's `created_at` string, and `reason: ""`.
+- Revisions list: `{"revisions": [Revision, ...]}`, revision 1 first.
+- Statement: `{"opening_balance", "entries", "closing_balance", "has_more", "snapshot"}`, plus `known_at` when the statement's first read sent it (exactly as sent; also on every page read through its snapshot). Entry: `{"payment", "delta", "balance_after", "revision", "effective_at", "recorded_at"}`, where `revision`, `effective_at` and `recorded_at` are the selected revision's.
+
+### 3.7 Ledger model (S3, D68-D70)
+
+- Every payment has revisions 1..n. Revision 1 is created with the payment (for a settlement member at the settlement's `committed_at`, which is also the member's `created_at`). Each revision records the creation-sequence number at which it was recorded.
+- Opening balance: for a seeded user, the fixture `balance` minus the net effect of that user's seeded payments at their fixture amounts; 0 for a user made by signup; for an imported stage-1 or stage-2 state, the imported `balance` minus the net effect of all that user's payments (D69). It never changes afterwards.
+- A view is (T, K, C): an effective-time limit T, a known-at limit K (or none), and a sequence cutoff C (the read's position, or a snapshot's). A payment's selected revision in the view is its highest revision with `recorded_at ≤ K` (when K is given) and sequence ≤ C. A payment with none contributes nothing.
+- A selected revision moves its `amount` from the sender to the receiver at its `effective_at`.
+- `total(T, K)` = opening balance + the net of the selected revisions with `effective_at ≤ T`. With no `as_of` and no `known_at` this is the current `total`, which equals opening balance + the net of every payment's latest revision.
+
+### 3.8 Historical holds (S3, D71)
+
+For each of the caller's outgoing authorizations A in the view (T, K):
+
+- A seeded as `captured`, `voided` or `expired` holds nothing at any instant.
+- Otherwise let c be A's `created_at` (a seeded open hold's `created_at` when supplied, else the reset's timestamp). If c is after T, or after K when K is given, A holds nothing.
+- A capture counts when its payment's `created_at` is at or before T and at or before K. Captures are never corrected.
+- If A was closed by a void, a final capture or a capture of the whole remainder at time x (its `closed_at`), and x is at or before T and at or before K, A holds nothing.
+- Otherwise, if A's `expires_at` is at or before T, A holds nothing (expiry is known as soon as creation is).
+- Otherwise A holds its `amount` minus the captures that count.
+
+`held(T, K)` is the sum over A; `available(T, K) = total(T, K) − held(T, K)`. With neither parameter this is stage 2's current computation.
+
+### 3.9 Endpoints (S3 changes and additions)
+
+`GET /me?as_of&known_at`: 401; then each parameter that is present is validated (422, section 3.4); 200 Me (section 3.6).
+
+`GET /statement?from&to&known_at&limit&offset`, or `GET /statement?snapshot&limit&offset`:
+
+- 401 first.
+- With `snapshot` present: `from`, `to` or `known_at` also present is 422; `limit` and `offset` are validated as on `GET /requests` (422); a token that does not exist in the current state, or belongs to another user, is 404 `not_found`; otherwise 200 with the page of the frozen result.
+- Without `snapshot`: `from`, `to` and `known_at` are validated (422, section 3.4); `limit` and `offset` as on `GET /requests` (422); after defaulting `to` (section 3.5), `from` later than `to` is 422 (D72). Then the result is computed in the view (T = window, K = `known_at`, C = the read's position), stored as a new snapshot, and its first page returned with the new token.
+- Result: the caller's payments (sent or received; any visibility) whose selected revision's `effective_at` is in `[from, to)`, ordered by that `effective_at` ascending, then `payment_id` ascending by code point. `from` absent means the opening of the wallet. `opening_balance` = opening balance + the net of the caller's selected revisions with `effective_at` before `from` (the opening balance itself when `from` is absent). `balance_after` runs from `opening_balance` through the full ordered window. `closing_balance` = `opening_balance` + the sum of every `delta` in the window. The page is entries `[offset, offset + limit)`; `has_more` is true when entries exist after the page.
+
+`POST /payments/{id}/corrections` (idempotent; the eighth path) `{"expected_revision", "amount", "effective_at", "reason"}`. Precedence, the first failing step answers (D74):
+
+1. Route 404 (an unknown method or path). 2. 401. 3. Key: missing or empty 400 `missing_idempotency_key`, over 255 characters 422. 4. Body: over the size limit 422, unparseable, invalid text or not an object 400. 5. A claimed key: same body 200 with the stored revision, a different body 409 `idempotency_key_reuse`. 6. Fields, all 422 `validation_failed` (D80): each of the four missing or `null`; `expected_revision` not an integral number from 1 to 2^53; `amount` not an integral number from 0 to 1000000000 (booleans and strings are not numbers); `effective_at` not a string, not an instant (section 3.4) or later than `now`; `reason` not a string of 1 to 200 code points. 7. Unknown payment 404. 8. The caller is not the payment's sender (its receiver or anyone else) 403 `forbidden`. 9. A capture or a settlement member 422 `linked_payment_immutable` (D75). 10. `expected_revision` is not the payment's latest revision number 409 `stale_revision`. 11. The debit (the difference, from the sender when the amount rises, from the receiver when it falls) is above the debited party's current `available` 409 `insufficient_funds`. 12. The credit would put the credited party's `total` above 2^53 422 `validation_failed` (D19). 13. With the new revision applied, either party's `total` or `available` is below 0 at some instant up to now at which one of their payments takes effect or one of their holds changes (section 3.8; all movements at one instant combined) 409 `historical_overdraft`. 14. Commit, in one synchronous step: append revision n + 1 with `recorded_at` (section 3.5), move the difference, store the key with the 201 body. 201 Revision.
+
+`GET /payments/{id}/revisions`: 401; unknown payment, or a caller who is neither the sender nor the receiver, 404 `not_found`; 200 Revisions list.
+
+Unchanged: every other endpoint, except that authorization representations carry `closed_at` and lists order by instants (I29).
+
+### 3.10 Reset (S3 additions)
+
+Every rule of stages 1 and 2 stands. Any rule below that fails is 422 `validation_failed` and nothing changes:
+
+- A seeded payment may carry `created_at`: optional; when present, an instant (section 3.4) at or before the reset's own timestamp. Omitted, it is the reset's timestamp. It is the payment's `created_at` in every representation, exactly as written, and its revision 1's `effective_at` and `recorded_at`.
+- A seeded authorization may carry `created_at`, under the same rule. Omitted, it is the reset's timestamp.
+- Fixture order is still creation order; seeded records with equal instants keep it for ties.
+- Opening balances per section 3.7. The seeded history is not checked for consistency (D69).
+- After a reset there are no snapshots; every earlier token is 404.
+
+### 3.11 Export and import (S3, D76)
+
+- `GET /_test/export`: `"schema": 3`. The state holds everything of schema 2 plus, for every payment, its revisions (`revision`, `amount`, `effective_at` as stored, `recorded_at`, `reason`, sequence number); each user's opening balance; every snapshot (token, owner, `from` as given or null, `to` as given or the defaulted instant, `known_at` as given or null, cutoff); and the correction idempotency records like every other path's. Built in one synchronous step.
+- `POST /_test/import` accepts `schema` 1, 2 and 3; anything else, or a state that fails full validation, is 422 with nothing changed. Schemas 1 and 2 import by their earlier rules, then each payment gets revision 1 from its stored fields (amount, `created_at` as `effective_at` and `recorded_at`, `reason: ""`, its creation sequence), each user's opening balance is the imported `balance` minus the net of all that user's payments, and there are no snapshots.
+- Schema-3 validation adds: revisions numbered 1..n without gaps; revision 1 equal to the payment's amount and `created_at` (`effective_at` and `recorded_at` both), `reason` ""; later revisions with amounts 0 to 1000000000, `reason` 1 to 200 code points, valid instants, `recorded_at` strictly increasing; for every user, opening balance + the net of the latest revisions equals `balance`; snapshots with unique tokens, an existing owner, valid instants and a cutoff not beyond the state's creation sequence.
+- After an import, everything of stage 2's 3.12 holds, every imported snapshot token pages exactly as it did in the source, and correction replays return their stored bodies.
+
+### 3.12 Concurrency model
+
+- As stages 1 and 2: each operation's read-check-write is synchronous; reset and import swap a whole state in one step. (S3) A correction checks `expected_revision`, the funds and the history and appends its revision in one synchronous step, so of two corrections with the same `expected_revision` exactly one succeeds. A statement computes its whole result and stores its snapshot in one synchronous step.
+
+### 3.13 UI (S3)
+
+- Unchanged (D77). The stage-2 UI keeps working: the wallet shows the current corrected `total`, `available` and `held` from `GET /me`; the feed shows the original payments from `GET /activity`.
+
+### 3.14 Limits (S3)
+
+- Instants: at most 64 characters (section 3.4). `reason`: 1 to 200 code points. `expected_revision`: 1 to 2^53. `amount`: 0 to 1000000000. `limit` and `offset`: as stage 1. A snapshot token of any length that is not in the state is 404.
+- Revisions per payment and snapshots are not capped: each correction needs its own key and moves money, and a snapshot is a fixed-size record (a cutoff and four bounds, under 512 bytes), so neither can outgrow memory within the per-request limits (D73).
+
+## 4. Work items
+
+### W14 Balance history (builder)
+
+Specification: stage-3 introduction, "Payment timestamps", "`GET /me` as of an instant", the revision-1, opening-balance and `known_at` rules of "Effective time, recorded time, and corrections", "Settlement history" (original revisions), "Historical holds". Invariants: I1, I2, I29, I50–I53, I59–I61, I66.
+
+- W14.1 Seeded `created_at` on payments and authorizations: returned exactly as written in every representation that shows the record (the feed, `GET /authorizations`, statements); omitted, the reset's timestamp; later than the reset's time 422 with nothing changed; an invalid instant 422. `GET /activity` and `GET /authorizations` order by instant, newest first, ties later-created first; a seeded payment dated in the past sorts below later API payments. Two payments made one after the other have different `created_at` values, the later one later (D67).
+- W14.2 Every payment has revision 1 (original amount, `effective_at` = `recorded_at` = `created_at`, `reason` ""): direct payments, request payments, captures, seeded payments and settlement members (whose `created_at` equals the settlement's `committed_at`).
+- W14.3 Opening balances: a seeded user's is `balance` minus the net of their seeded payments; a signup's is 0; `GET /me?as_of=<before every payment>` returns it; a fixture's `balance` is still the current `total` right after the reset.
+- W14.4 `GET /me?as_of=T`: inclusive at exactly a payment's `created_at`; one microsecond earlier excludes it (exact comparison with a seeded microsecond `created_at`); at or after the latest payment the current values; before the earliest the opening balance; `as_of` echoed exactly (`Z`, `z`, `t`, `+05:30`, `-00:00`, fractions of any length); `+` sent raw or as `%2B` both work; without parameters the stage-2 shape with no `as_of` key. Invalid: a bare date, a naive time, an empty value, `2026-02-30…`, hour 24, second 60, offset `+24:00`, 65 characters: 422.
+- W14.5 `GET /me?known_at=K`: payments recorded after K contribute nothing; holds created after K hold nothing; K in the future means everything; `known_at` echoed exactly; invalid 422; both parameters together.
+- W14.6 Historical holds (section 3.8): a hold counts from its creation; a nonfinal capture reduces it at the capture's time; a final capture, a capture of the whole remainder, a void and an expiry release the remainder at their times; a seeded closed authorization holds nothing at any instant; a seeded open hold counts from its supplied `created_at` or else from the reset; `as_of` beyond the deadline of a still-open hold no longer counts it; `balance == total` and `available == total − held` in every view; the sum of `total` over all users equals the seeded total in every view.
+- W14.7 `closed_at` in every authorization representation (I61), including a hold expired by the clock (its `expires_at` string) and seeded closed ones (the reset's timestamp); `null` while open, including after a nonfinal capture.
+- W14.8 Gate: `npm test` (with builder tests for the instant grammar and exact comparison, revision selection and historical holds), the newest acceptance suite, the supplied checks for stages 1 to 3 (stage-3 checks that need W15 or W16 listed as expected failures), the offline build.
+
+### W15 Statements (builder)
+
+Specification: "`GET /statement`", "Statement requirements" 1–4, the `known_at` and ordering rules of "Effective time, recorded time, and corrections", "Stable statement pagination", the statement lines of "Historical holds". Invariants: I54, I55, I59, I64.
+
+- W15.1 Shape per section 3.6; entries oldest first by `effective_at`, ties by `payment_id` ascending (seeded payments with one shared `created_at`); `delta` negative for sent and positive for received; zero-amount seeded payments appear with `delta` 0; `balance_after` runs.
+- W15.2 Windows: `[from, to)`, a payment at exactly `from` is in and at exactly `to` is out; `opening_balance` = balance immediately before `from`, `closing_balance` = immediately before `to`; `from` absent means the wallet's opening; `to` absent means the read's instant, and a payment made just before the read is in the default window; `from` later than `to` 422; `from == to` an empty window with equal balances; instants in the future allowed; invalid instants 422; the arithmetic identity holds for every window.
+- W15.3 Only the caller's payments: a public payment between two other users never appears; private payments of the caller do.
+- W15.4 Pages: `limit` and `offset` exactly as `GET /requests` (defaults 50 and 0, the 422s, `has_more`, the final partial page, an offset past the end gives no entries and `has_more` false); the second page carries the same `opening_balance` and `closing_balance` as the first and its entries' `balance_after` continue the running balance.
+- W15.5 `known_at` on statements: payments recorded after it are absent; echoed exactly on the first page and on every page read through its snapshot.
+- W15.6 Snapshots: every first read returns a new `snapshot`; paging it after new payments, request payments, settlements, authorizations, captures, voids and expiries returns exactly the first result's entries and balances; `from`, `to` or `known_at` with a snapshot 422; an unknown token, another user's token, and a token after a reset 404; `limit` and `offset` validation as above on snapshot reads.
+- W15.7 Holds: authorizations, voids and expiries are never entries; each capture is exactly one entry with its `authorization_id`.
+- W15.8 Gate as W14.8.
+
+### W16 Corrections (builder)
+
+Specification: "Effective time, recorded time, and corrections" (corrections, revisions, overdraft), "Stable statement pagination" (corrections and snapshots), "Settlement history" (immutable members and captures), "Historical holds" (overdraft with holds). Invariants: I1, I2, I15–I19, I56–I58, I62, I63.
+
+- W16.1 201 Revision with `revision` n + 1, `amount`, `effective_at` exactly as sent, `recorded_at` issued by the service and strictly later than the previous revision's (two corrections in one millisecond included), `reason`; `GET /payments/{id}/revisions` then lists 1..n + 1.
+- W16.2 Idempotency (the eighth path): a missing key 400, a key over 255 characters 422, a replay 200 with the original revision even after newer revisions, the same key with a different body 409, a failed correction claims nothing and its key then works, keys scoped by path.
+- W16.3 Validation 422 for every field rule of section 3.9 step 6, including `null`, booleans, strings, `1.5`, `-1`, `0` revision, amount 1000000001, reason "" and 201 code points, and `effective_at` one second after the service's `now`; `1.0` and `1e3` are valid integral numbers.
+- W16.4 Permissions: 401 without a token; unknown payment 404; the receiver and a third party 403.
+- W16.5 Immutable: a capture and a settlement member 422 `linked_payment_immutable`, also for a seeded payment with a non-null `authorization_id` or `settlement_id`.
+- W16.6 Stale: `expected_revision` lower or higher than the latest 409 `stale_revision`; 50 concurrent corrections of one payment with the same `expected_revision` and different keys give exactly one 201 and 49 `stale_revision`, and money moves once.
+- W16.7 Money: an increase debits the sender and credits the receiver by the difference; a decrease the reverse; amount 0 reverses the payment entirely; an unchanged amount with a new `effective_at` moves nothing now; the sum of totals is unchanged; `GET /activity`, the original 201 body and its replay still show the original amount; requests, settlements and captures keep their original bodies.
+- W16.8 Funds: a debit above the debited party's current `available` (held funds count as unavailable) is 409 `insufficient_funds`; a correction that would make either party negative at a past instant (an earlier `effective_at` before the sender had the money; a later `effective_at` after the receiver spent it; a past hold making `available` negative) is 409 `historical_overdraft`; movements at one instant are combined before the check; each failure leaves balances, revisions, statements and keys unchanged.
+- W16.9 History reads: `GET /me?as_of` before and after the new `effective_at`; `known_at` before the correction's `recorded_at` shows the previous revision, after it the new one; a statement uses the selected revision (its `amount`, `revision`, `effective_at`, `recorded_at`, order) and never counts a correction beside the revision it replaces; a correction moves a payment into or out of a window; snapshots taken before the correction still page their old result.
+- W16.10 Revisions read: both parties 200; a third party 404 even for a public payment; unknown 404; no token 401.
+- W16.11 Gate as W14.8.
+
+### W17 Export, import, upgrade, RUN.md (builder)
+
+Specification: stage-1 §10, stage-3 "Settlement history" (exports from stages 1 and 2), stage-4 look-ahead (section 1). Invariants: I25, I26, I37, I65.
+
+- W17.1 Schema-3 export per section 3.11, one synchronous snapshot.
+- W17.2 Round trip, in the same container and into a second one: revisions, opening balances, historical views, statements, snapshot tokens (paging the same results), correction replays, and every stage-2 promise.
+- W17.3 Upgrade from the frozen `stage-1/` and `stage-2/` builds: 204; each payment revision 1 at its `created_at`; opening balances; `GET /me?as_of` before every payment returns the opening balance; holds and captures from a stage-2 export keep their history and `closed_at`; stage-1 and stage-2 replays return their stored bodies verbatim; tokens and logins work; pending requests are payable; imported payments can be corrected; imported captures and settlement members are immutable.
+- W17.4 Invalid schema-3 states are 422 and change nothing: a gap in revision numbers, a revision 1 that differs from its payment, a decreasing `recorded_at`, an opening balance that does not add up to `balance`, a snapshot owned by an unknown user.
+- W17.5 RUN.md for stage 3: the image and paths, `npm test`, the acceptance suite with its prerequisites, the supplied checks with `--stage 3`.
+- W17.6 Gate as W14.8, with every check counting.
+
+### W18 Stage-3 acceptance suite (verifier)
+
+Specification: all of `stage-3.md`, and `stage-1.md` and `stage-2.md` as they still apply. Invariants: all.
+
+- W18.1 The stage-1 and stage-2 acceptance tests carried into `stage-3/acceptance/` and brought to the stage-3 contract (`closed_at` in authorization representations, seeded `created_at` now honoured); the stage-2 browser tests unchanged.
+- W18.2 Tests for every criterion W14.1–W17.5 and every invariant I50–I66, each marked with its item so `--upto N` selects them.
+- W18.3 Upgrade tests with containers built from the frozen `stage-1/` and `stage-2/` folders.
+- W18.4 Concurrency: 50 concurrent corrections with one `expected_revision`; corrections racing payments and captures on the same wallets; snapshot pages read while corrections commit; I1 and I2 checked at teardown in current and historical views.
+- W18.5 Time marks from the service only. Microsecond and offset forms built from the service's own `created_at` values.
+- W18.6 The supplied stage-3 sample passes. The new stage-3 tests fail on the accepted stage-2 build, which has none of the new endpoints, showing that they test stage-3 behaviour.
+
+## 5. Decisions
+
+Stages 1 and 2's decisions D1–D65 stand. New:
+
+- **D66 Instants.** The grammar of section 3.4, compared exactly. "An RFC 3339 instant with an offset": RFC 3339 allows `t` and `z` and any number of fraction digits, so those are accepted; a leap second (`:60`) is refused because no service clock issues one and a historical query cannot place it. Exact comparison is required because `as_of` is inclusive and tests take their instants from the service's own `created_at` values or seed them with microseconds: rounding either side by a millisecond moves a payment across the boundary. 64 characters bounds the input, as stage 2 bounded `expires_at`. Client-supplied instants are echoed verbatim because the specification says so for `as_of` and `known_at` ("exactly as given") and stage 2 already did so for `expires_at` (D48).
+- **D67 Strictly increasing timestamps, read instant and default `to`.** Writes issue strictly increasing timestamps (one millisecond apart at least): with stage 1's "never decreasing" clock, two payments made one after the other can share a millisecond, and statement ties go to `payment_id`, which is random, so the later payment could be listed first (the supplied check `test_a_statement_walks_the_balance_forward` pays 300 then 200 and expects `[-300, -200]`). It also makes "Recorded times for one payment strictly increase" hold by construction. The cost is that a burst runs the clock ahead of the wall by at most a millisecond per write, which no rule forbids. A read's instant is the operation's `now` (D49). The specification sets `to` to "now" in a half-open window; with millisecond timestamps a payment issued in the same millisecond as the read would fall at `to` and drop out of the default window although it existed before the read began, so the default `to` is the read's `now` plus one millisecond. An omitted `as_of` is the read's `now`, inclusive, which already includes it.
+- **D68 Seeded `created_at`.** Payments: as the specification states. Authorizations: "Seeded open holds are assumed created at reset unless `created_at` is supplied", so authorizations accept `created_at` too, under the same rule (not in the future; exactly as written). "In the future" means later than the reset's own timestamp.
+- **D69 Opening balances without a history check.** Opening balance = seeded `balance` minus the net of seeded payments, as specified. "Seeded history is consistent and nonnegative" is read as the fixture author's promise, not as a reset rule: stage-1 and stage-2 fixtures seed payments that were never meant to add up ("you do not replay seeded payments against balances"), those suites still run against this service, and refusing their fixtures would break them. With a consistent fixture every historical balance is nonnegative; with an inconsistent one the history reads as computed, and a correction touching it can only be refused by the overdraft check.
+- **D70 Revision selection.** "Its latest revision recorded at or before `known_at`" plus a creation-sequence cutoff at the read, so that a statement snapshot excludes everything recorded after its read, even in the same millisecond. With `known_at` absent only the cutoff applies ("everything known when the read begins").
+- **D71 Historical holds and `closed_at`.** Section 3.8 is the specification's lifecycle ("A hold starts at authorization creation; nonfinal capture reduces it at capture time; final capture, void or expiry releases the remainder at that event's time. Expiry takes effect at `expires_at`"), with "seeded closed holds need not reconstruct a prior lifecycle" read as: they hold nothing at any instant. `closed_at` is the event time of the close: the issued time of a void or capture, `expires_at` for the clock (as stored, since that is the instant it took effect), and the reset's timestamp for a seeded closed hold, as stage 2 already recorded.
+- **D72 Statement details.** `from` later than `to` is 422: an empty window could not satisfy both requirement 2 (opening before `from`, closing before `to`) and requirement 3 (opening plus the deltas equals closing) when payments lie between them. Ties sort by `payment_id` in code-point order, which is byte order for the ASCII ids this service issues. A snapshot page has the same top-level fields as the first page, `known_at` included, because it "pages that exact result". Every first read stores a snapshot, also when it is never paged.
+- **D73 Snapshots by cutoff.** A snapshot stores its owner, its window, its `known_at` and the creation-sequence position at the read, never a copy of the entries. Revisions are only appended and payments never change, so recomputing the view at any later time gives the frozen result, opening and closing balances included. The token is `ss_` plus at least 80 random bits. Storage is a fixed-size record, so no cap is needed. Stage 4 inherits the same definition through the export.
+- **D74 Correction precedence.** Section 3.9. Stage 1's order holds for the common steps (route, authentication, key, body, claimed key, fields, then the resource). Then the specification's own order: who may correct (403), whether the payment may be corrected at all (422 `linked_payment_immutable`), the revision (409 `stale_revision`), the current debit (409 `insufficient_funds`, "Current unaffordable debits still take precedence"), the range guard, then the history (409 `historical_overdraft`). The current debit is judged on `available`, as every stage-2 debit is (D53).
+- **D75 Linked payments.** A payment with a non-null `authorization_id` is a capture and one with a non-null `settlement_id` is a settlement member, whether created by the API, seeded or imported. Seeded links are display-only (D34, D62), but a payment that claims a link is treated as linked, the stricter reading of "immutable linked payments".
+- **D76 Export schema 3.** `format_version` stays 1 (§10); the state's `schema` tells the import which rules apply. Schemas 1 and 2 import as before and are lifted to revision 1 per payment, with opening balances derived from the imported balances, so "exports produced by the same team's stage-1 or stage-2 service" are accepted unchanged.
+- **D77 UI unchanged.** Stage 3 names no screen, route, `data-testid` or UI state, and the UI is judged on the states the specification names. Changing it would risk the stage-2 checks for nothing graded. The existing screens stay correct: balances come from `GET /me` (current, corrected) and the feed from `GET /activity` (originals), exactly as the specification describes those endpoints.
+- **D78 Same room.** The protocol asks for a new room when the current one is more than two thirds full. The band CLI cannot count a room's messages; the agents of this room have sent about 153 messages (counted from the four seat sessions on this machine at stage start) and every send has been accepted. Every seat's receiver is bound to this room (`band sessions` shows `binding=bound room=7884df0c-…`), so moving would risk cutting delivery to every seat mid-run. The planner checks that every send is accepted; if a send is refused, it creates a new room with the same members, posts its id, and continues there. Re-evaluated at the start of stage 4.
+- **D79 `+` in instant parameters.** RFC 3986 gives `+` no special meaning in a query; only form encoding turns it into a space. A space can never be part of a valid instant, so reading a literal `+` as a plus sign accepts every correctly sent instant, `%2B` included, and refuses nothing a client could have meant otherwise.
+- **D80 Correction fields are all 422.** "All fields are required … Invalid input is 422 `validation_failed`" is an endpoint-specific rule, so a missing field, `null` and a wrong JSON type are 422 for all four fields, not 400.
+- **D81 No clock tolerance.** "An RFC 3339 instant not later than now" is checked against the operation's `now` exactly. The graded harness and the service share one host clock, and the service clock never runs behind the wall clock.
+- **D82 Unchanged amounts.** A correction whose amount equals the current one is valid: it appends a revision (typically moving `effective_at`) and moves no money now.
+- **D83 Non-senders are 403.** "An authenticated non-sender gets 403 `forbidden`", third parties included, although `GET /payments/{id}/revisions` answers them 404 as the specification also states.
+
+## 6. Specification trace
+
+Each normative line of stage-3.md, condensed (T1-T70), with the acceptance tests that exercise it (file prefix `test_` and test prefix `test_` omitted). Stage 1's 97 lines and stage 2's 130 lines are carried by the regression tests in stage-3/acceptance, brought to the stage-3 contract. A row without a test when its item's tests land is a gap and becomes a criterion at once.
+
+| T | Section | Normative line (condensed) | Plan | Tests | Status |
+|---|---|---|---|---|---|
+| T1 | intro | historical balances and paginated statements; corrections preserve the original receipt; effective date and information known at a time | W14 W15 W16 | | |
+| T2 | timestamps | every payment's `created_at` is an RFC 3339 instant with an offset, when it moved money | I50 W14.1 | | |
+| T3 | timestamps | every endpoint returning a payment includes it | I50 W14.1 | | |
+| T4 | timestamps | `GET /activity` keeps its ordering by `created_at` | I29 W14.1 | | |
+| T5 | timestamps | seeded payments may supply `created_at`; omission uses reset time, before later API payments | D68 W14.1 | | |
+| T6 | timestamps | a seeded `created_at` in the future is 422 from reset with no state change | D68 W14.1 | | |
+| T7 | timestamps | a fixture's `balance` remains the balance after all seeded payments; loading them changes no balance | I51 W14.3 | | |
+| T8 | me-as-of | `as_of` optional, RFC 3339 instant with offset; naive time, bare date, empty: 422 | I53 W14.4 | | |
+| T9 | me-as-of | without temporal parameters, the existing money fields with current corrected values | I52 W14.4 W16.7 | | |
+| T10 | me-as-of | with `as_of`, the balance after every payment at or before it and before every later one; exactly `as_of` counts | I52 W14.4 | | |
+| T11 | me-as-of | `as_of` at or after the latest payment: the current balance | I52 W14.4 | | |
+| T12 | me-as-of | `as_of` before the earliest payment: the opening balance | I51 W14.3 W14.4 | | |
+| T13 | me-as-of | the response carries `as_of` back exactly as given | I52 W14.4 | | |
+| T14 | statement | `from` and `to` optional; `from` defaults to the wallet's opening, `to` to now | D67 W15.2 | | |
+| T15 | statement | `limit` and `offset` exactly as in `GET /requests` | W15.4 | | |
+| T16 | statement | the caller's sent and received payments in `[from, to)`, oldest first, each with the balance after it | I54 W15.1 W15.2 | | |
+| T17 | statement | shape: `opening_balance`, `entries` (`payment`, `delta`, `balance_after`), `closing_balance`, `has_more` | 3.6 W15.1 | | |
+| T18 | statement | (1) order by `created_at` ascending, then payment id ascending for ties | I54 W15.1 | | |
+| T19 | statement | (2) `opening_balance` immediately before `from`; `closing_balance` immediately before `to` | I54 W15.2 | | |
+| T20 | statement | (3) opening plus every delta of the full window equals closing; sent negative, received positive | I54 W15.1 W15.2 | | |
+| T21 | statement | (4) pagination never changes `balance_after` or the window's balances | I54 W15.4 | | |
+| T22 | statement | only the caller's payments, even when others are public; feed visibility does not apply | I54 W15.3 | | |
+| T23 | corrections | effective time distinct from recorded time; every payment has a revision history | I56 W14.2 | | |
+| T24 | corrections | revision 1: original amount, `effective_at = recorded_at = created_at`; a seeded `created_at` is also its original time; omission uses reset time | I56 W14.2 | | |
+| T25 | corrections | opening balances = seeded ending balances minus original seeded payments' net; corrections never change them; new accounts open at zero; seeded history consistent and nonnegative | I51 D69 W14.3 W16.7 | | |
+| T26 | corrections | `POST /payments/{id}/corrections` needs a key and the original sender; non-sender 403; unknown 404 | D83 W16.2 W16.4 | | |
+| T27 | corrections | all fields required: positive integer revision, amount 0..1000000000 (0 reverses), reason 1..200, `effective_at` an instant not later than now; invalid 422 | D80 W16.3 | | |
+| T28 | corrections | a correction changes neither parties nor visibility | I57 W16.7 | | |
+| T29 | corrections | appends an immutable revision; 201 with `payment_id`, `revision`, `amount`, `effective_at`, server `recorded_at`, `reason` | I56 W16.1 | | |
+| T30 | corrections | recorded times for one payment strictly increase | D67 W16.1 | | |
+| T31 | corrections | a stale expected revision is 409 `stale_revision` | W16.6 | | |
+| T32 | corrections | a replay returns the original revision with 200 even after newer revisions; a different body with the key is 409 | I15 W16.2 | | |
+| T33 | corrections | the difference moves between the same two wallets atomically; an increase debits the sender, a decrease the receiver | I57 W16.7 | | |
+| T34 | corrections | a currently unaffordable debit is 409 `insufficient_funds` | D74 W16.8 | | |
+| T35 | corrections | otherwise a negative corrected balance at any effective-time boundary is 409 `historical_overdraft`; movements at one instant combined | I58 W16.8 | | |
+| T36 | corrections | either failure preserves balances, revisions, statements and keys | I57 W16.8 | | |
+| T37 | corrections | the sum of balances equals the seeded total in every historical view | I1 W14.6 W16.7 | | |
+| T38 | corrections | the original payment and every original idempotent response unchanged; the feed shows the original; corrections are not feed payments | I57 W16.7 | | |
+| T39 | corrections | `GET /payments/{id}/revisions`: `{"revisions": [...]}` in order with revision 1 (`reason: ""`); parties only; third party 404 even when public; no token 401 | I56 W16.10 | | |
+| T40 | corrections | `known_at` on `/me` and `/statement`: the latest revision recorded at or before it; none contributes nothing; omitted means everything known when the read begins; then effective times apply | I59 D70 W14.5 W15.5 W16.9 | | |
+| T41 | corrections | `as_of` stays inclusive and the window half-open; both instants may be in the future; invalid or empty 422; `known_at` echoed exactly | I53 I59 W14.4 W14.5 W15.2 W15.5 | | |
+| T42 | corrections | statement order by selected `effective_at`, then payment id | I54 W16.9 | | |
+| T43 | corrections | each entry adds the selected `revision`, `effective_at`, `recorded_at`; `payment.amount` is the selected amount | 3.6 W15.1 W16.9 | | |
+| T44 | corrections | zero-amount revisions are entries with zero delta; no correction counted beside the revision it replaces | I54 W16.7 W16.9 | | |
+| T45 | corrections | with no corrections and no `known_at`, earlier behaviour unchanged | I66 W15.1 | | |
+| T46 | snapshots | every first `GET /statement` returns an opaque `snapshot` token freezing revisions, window, balances, entries and default `to` | I55 D73 W15.6 | | |
+| T47 | snapshots | `?snapshot=&limit=&offset=` pages that exact result, even after payments or corrections | I55 W15.6 W16.9 | | |
+| T48 | snapshots | only `limit` and `offset` may accompany a snapshot; `from`, `to` or `known_at` with it is 422 | I55 W15.6 | | |
+| T49 | snapshots | unknown, another user's or a pre-reset token 404; tokens last until reset; no survival across restarts needed | I55 W15.6 | | |
+| T50 | snapshots | paging changes neither balances nor entries; the final partial page and offsets beyond the end report `has_more` correctly | I54 I55 W15.4 W15.6 | | |
+| T51 | snapshots | unrecognized query parameters are still ignored | 3.2 W15.4 | | |
+| T52 | snapshots | a correction may move a payment into or out of a window | W16.9 | | |
+| T53 | snapshots | existing snapshots unchanged during concurrent payments or corrections | I55 W18.4 | | |
+| T54 | snapshots | concurrent corrections with the same expected revision cannot both succeed | I63 W16.6 | | |
+| T55 | settlements | stage-1 settlements keep their original receipts and privacy rules | I66 W14.2 | | |
+| T56 | settlements | each member's revision 1 uses the settlement's `committed_at` as `effective_at` and `recorded_at` | W14.2 | | |
+| T57 | settlements | a single-payment correction of a settlement member is 422 `linked_payment_immutable` | I62 W16.5 | | |
+| T58 | upgrade | a stage-3 service accepts exports from the same team's stage-1 or stage-2 service | I65 W17.3 | | |
+| T59 | upgrade | the ledger imports and accounts for authorizations and captures | I65 W17.3 | | |
+| T60 | upgrade | captures are immutable linked payments: correcting one is 422 `linked_payment_immutable` | I62 W16.5 W17.3 | | |
+| T61 | holds | with `as_of` and `known_at` all four money fields describe one view: `balance = total`, `available = total − held` | I60 W14.6 | | |
+| T62 | holds | a hold starts at creation; a nonfinal capture reduces it then; a final capture, void or expiry releases the remainder then; expiry at `expires_at` | I60 W14.6 | | |
+| T63 | holds | events other than clock expiry are known at their server time; once creation is known, the deadline is known | I60 W14.5 W14.6 | | |
+| T64 | holds | beyond now an open hold expires at its deadline; without `as_of` the read's instant | I60 W14.6 | | |
+| T65 | holds | authorizations expose `closed_at`: null while open, the event time when closed | I61 W14.7 | | |
+| T66 | holds | historical totals follow the effective/recorded rules; a correction making total or available negative at any past effective/event boundary is 409 `historical_overdraft` | I58 W16.8 | | |
+| T67 | holds | current unaffordable debits still take precedence as `insufficient_funds` | D74 W16.8 | | |
+| T68 | holds | seeded open holds are created at reset unless `created_at` is supplied; seeded closed holds need no lifecycle | D68 D71 W14.6 | | |
+| T69 | holds | statements hold money movements only; authorization, release and expiry are not payments; captures appear once with their links | I64 W15.7 | | |
+| T70 | holds | old snapshots unchanged after any lifecycle action or correction | I55 W15.6 W16.9 | | |
+
+## 7. Handoff log
+
+| Handoff | To | Sent | Acknowledged | State |
+|---|---|---|---|---|
+
+## 8. Stage close
+
+Not yet.
