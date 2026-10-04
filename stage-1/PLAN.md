@@ -11,7 +11,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d, suite 026f116); awaiting critic | 2455a8d |
-| W4 | builder | Settlements | BUILDING (committed e143cf1, not handed off) | — |
+| W4 | builder | Settlements | HANDED_OFF | e143cf1 |
 | W5 | builder | Export and import | BUILDING (committed 295378c, not handed off) | — |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
@@ -464,3 +464,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | verified and approved at 2ffcbe8 instead (1bd9c8d lacks D34/D35) | ACCEPTED |
 | HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (M49), verifier test ee19494, critic APPROVED W1+W2 (REVIEW.md 493fc0c); verifier PASS W1+W2 07:03Z | ACCEPTED |
 | HANDOFF W3 @ 2455a8d (builder) | verifier, critic | 07:29Z | verifier PASS 07:33Z | awaiting critic |
+| HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | — | awaiting verifier run |
