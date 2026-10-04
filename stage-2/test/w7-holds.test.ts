@@ -506,12 +506,20 @@ describe('expiry by the clock (W7.6)', () => {
     assert.deepEqual(await money(a), { total: 9850, available: 9850, held: 0 });
   });
 
-  it('a seeded expired authorization is expired whatever its expires_at (D50)', async () => {
-    await reset(port, fixture({ authorizations: [seedAuth('a_x', 'ada', 'bob', 100, { status: 'expired', expires_at: inHours(5) })] }));
+  it('a seeded expired authorization: capture is not_open before its deadline, expired after it (plan 3.5)', async () => {
+    await reset(port, fixture({
+      authorizations: [
+        seedAuth('a_ahead', 'ada', 'bob', 100, { status: 'expired', expires_at: inHours(5) }),
+        seedAuth('a_past', 'ada', 'bob', 100, { status: 'expired', expires_at: inHours(-5) }),
+      ],
+    }));
     const [a, b] = await Promise.all([login(port, 'ada'), login(port, 'bob')]);
-    assert.deepEqual((await list(a)).map((x) => [x.status, x.remaining_amount]), [['expired', 0]]);
-    expectError(await capture(b, 'a_x'), 409, 'authorization_expired');
-    expectError(await voidIt(a, 'a_x'), 409, 'authorization_not_open');
+    assert.deepEqual((await list(a)).map((x) => [x.status, x.remaining_amount]), [['expired', 0], ['expired', 0]]);
+    assert.deepEqual(ids(await list(a, '?status=expired')), ['a_past', 'a_ahead']);
+    expectError(await capture(b, 'a_ahead'), 409, 'authorization_not_open');
+    expectError(await capture(b, 'a_past', { amount: 1e12 }), 409, 'authorization_expired');
+    expectError(await capture(a, 'a_ahead'), 403, 'forbidden');
+    for (const id of ['a_ahead', 'a_past']) expectError(await voidIt(a, id), 409, 'authorization_not_open');
     assert.deepEqual(await money(a), { total: 10_000, available: 10_000, held: 0 });
   });
 

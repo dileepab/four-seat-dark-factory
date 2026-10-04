@@ -65,8 +65,9 @@ function findAuthorization(st: State, id: string): Authorization {
   return authorization;
 }
 
-// POST /authorizations/{id}/capture: only the receiver. Precedence D50: `final` type,
-// `amount` value, unknown, permission, expired, not open, above the remainder, 2^53 guard.
+// POST /authorizations/{id}/capture: only the receiver. Precedence (plan 3.5, D50): `final`
+// type, `amount` value, unknown, permission, captured or voided (whatever the clock says),
+// deadline passed, a stored `expired` whose deadline is ahead, above the remainder, 2^53 guard.
 export function captureAuthorization(ctx: Ctx): Result {
   const caller = authenticate(ctx);
   const key = idempotencyKey(ctx);
@@ -85,9 +86,11 @@ export function captureAuthorization(ctx: Ctx): Result {
     const authorization = findAuthorization(st, ctx.params.id);
     if (authorization.toUserId !== caller.id) throw forbidden('only the receiver may capture this authorization');
     const now = clock(st);
-    const status = statusAt(authorization, now.ms);
-    if (status === 'expired') throw conflict('authorization_expired', 'the authorization has expired');
-    if (status !== 'open') throw conflict('authorization_not_open', `the authorization is ${status}`);
+    if (authorization.status === 'captured' || authorization.status === 'voided') {
+      throw conflict('authorization_not_open', `the authorization is ${authorization.status}`);
+    }
+    if (now.ms >= authorization.expiresMs) throw conflict('authorization_expired', 'the authorization has expired');
+    if (authorization.status !== 'open') throw conflict('authorization_not_open', 'the authorization is expired');
     const remaining = authorization.amount - authorization.capturedAmount;
     const take = amount ?? remaining;
     if (take > remaining) {
