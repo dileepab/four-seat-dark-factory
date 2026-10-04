@@ -1,4 +1,4 @@
-// POST /payments/{id}/corrections and GET /payments/{id}/revisions (plan 3.9, D74, D75, D80-D83).
+// POST /payments/{id}/corrections and GET /payments/{id}/revisions (plan 3.9, D74, D75, D80-D83, D94).
 
 import { authenticate, readJson, type Ctx, type Result } from '../context.ts';
 import { ApiError, conflict, forbidden, invalid, notFound } from '../errors.ts';
@@ -60,12 +60,16 @@ export function correctPayment(ctx: Ctx): Result {
     const payment = st.paymentsById.get(ctx.params.id);
     if (!payment) throw notFound('no such payment');
     if (payment.fromUserId !== caller.id) throw forbidden('only the sender may correct this payment');
-    if (payment.authorizationId !== null || payment.settlementId !== null) {
-      throw new ApiError(422, 'linked_payment_immutable', 'a capture or a settlement member cannot be corrected');
+    if (payment.authorizationId !== null || payment.settlementId !== null || payment.refundOf !== null) {
+      throw new ApiError(422, 'linked_payment_immutable', 'a capture, a settlement member or a refund cannot be corrected');
     }
     const latest = payment.revisions[payment.revisions.length - 1];
     if (fields.expected !== latest.revision) {
       throw conflict('stale_revision', `the payment's latest revision is ${latest.revision}`);
+    }
+    // Refunds only ever add up, so no correction may go below what was refunded (D92, D94).
+    if (fields.amount < payment.refunded) {
+      throw new ApiError(422, 'refund_exceeds_payment', `the payment has ${payment.refunded} refunded`);
     }
     // The difference moves between the same two wallets: a rise from the sender, a fall from
     // the receiver, judged on the debited party's current available (D53, D74).

@@ -105,7 +105,7 @@ export function captureAuthorization(ctx: Ctx): Result {
     const payment = commitTransfer(st, {
       from: st.users.get(authorization.fromUserId)!, to: caller, amount: take,
       note: authorization.note, visibility: authorization.visibility,
-      requestId: null, settlementId: null, authorizationId: authorization.id, createdAt: ts,
+      requestId: null, settlementId: null, authorizationId: authorization.id, refundOf: null, createdAt: ts,
     });
     authorization.capturedAmount += take;
     authorization.paymentIds.push(payment.id);

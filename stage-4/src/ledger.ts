@@ -20,6 +20,7 @@ export interface Transfer {
   requestId: string | null;
   settlementId: string | null;
   authorizationId: string | null;
+  refundOf: string | null;
   createdAt: string;
 }
 
@@ -43,6 +44,7 @@ export function recordPayment(st: State, t: Transfer): Payment {
     requestId: t.requestId,
     settlementId: t.settlementId,
     authorizationId: t.authorizationId,
+    refundOf: t.refundOf,
     createdAt: t.createdAt,
     seq: nextSeq(st),
   });

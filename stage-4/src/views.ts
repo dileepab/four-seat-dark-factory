@@ -23,6 +23,7 @@ export function paymentView(st: State, p: Payment): Record<string, unknown> {
     request_id: p.requestId,
     settlement_id: p.settlementId,
     authorization_id: p.authorizationId,
+    refund_of: p.refundOf,
     created_at: p.createdAt,
   };
 }

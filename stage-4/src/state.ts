@@ -65,13 +65,15 @@ export interface Payment {
   requestId: string | null;
   settlementId: string | null;
   authorizationId: string | null; // the authorization a capture took this payment from
+  refundOf: string | null; // the payment this one refunds (plan 3.6, D91)
   createdAt: string; // as issued, or exactly as seeded
   createdKey: string; // instant.ts key of createdAt
   revisions: Revision[]; // 1..n; `amount` above is revision 1's
+  refunded: number; // the sum of the amounts of its refunds (plan 3.7, D92)
   seq: number;
 }
 
-export type NewPayment = Omit<Payment, 'createdKey' | 'revisions'> & { revisions?: Revision[] };
+export type NewPayment = Omit<Payment, 'createdKey' | 'revisions' | 'refunded'> & { revisions?: Revision[] };
 
 export interface PayRequest {
   id: string;
@@ -283,7 +285,8 @@ function indexed<K, V>(map: Map<K, V[]>, key: K): V[] {
   return list;
 }
 
-// Add a payment; without `revisions` it gets revision 1 from its own fields (plan 3.7).
+// Add a payment; without `revisions` it gets revision 1 from its own fields (plan 3.7). A refund
+// adds its amount to its target's refunded total, so the target must already be in the state.
 export function addPayment(st: State, input: NewPayment): Payment {
   const createdKey = tsKey(input.createdAt);
   const payment: Payment = {
@@ -293,7 +296,9 @@ export function addPayment(st: State, input: NewPayment): Payment {
       revision: 1, amount: input.amount, effectiveAt: input.createdAt, effKey: createdKey,
       recordedAt: input.createdAt, recKey: createdKey, reason: '', seq: input.seq,
     }],
+    refunded: 0,
   };
+  if (payment.refundOf !== null) st.paymentsById.get(payment.refundOf)!.refunded += payment.amount;
   st.payments.push(payment);
   st.paymentsById.set(payment.id, payment);
   indexed(st.paymentsOf, payment.fromUserId).push(payment);

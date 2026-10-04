@@ -22,7 +22,7 @@ const STATEMENT_FIELDS = ['closing_balance', 'entries', 'has_more', 'opening_bal
 const ENTRY_FIELDS = ['balance_after', 'delta', 'effective_at', 'payment', 'recorded_at', 'revision'];
 const PAYMENT_FIELDS = [
   'amount', 'authorization_id', 'created_at', 'currency', 'from_handle', 'from_user_id', 'note', 'payment_id',
-  'request_id', 'settlement_id', 'to_handle', 'to_user_id', 'visibility',
+  'refund_of', 'request_id', 'settlement_id', 'to_handle', 'to_user_id', 'visibility',
 ];
 
 const q = (params: Record<string, string | number>) =>

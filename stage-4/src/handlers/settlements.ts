@@ -26,7 +26,7 @@ function readTransfer(st: State, entry: JsonObject, i: number): Omit<Transfer, '
   const to = st.usersByHandle.get(toHandle);
   if (!to) throw notFound(`transfers[${i}]: no user has the handle ${toHandle}`);
   if (from.id === to.id) throw new ApiError(422, 'self_payment', `transfers[${i}] pays its own sender`);
-  return { from, to, amount, note, visibility, requestId: null, authorizationId: null };
+  return { from, to, amount, note, visibility, requestId: null, authorizationId: null, refundOf: null };
 }
 
 function handleField(entry: JsonObject, name: string, i: number): string {

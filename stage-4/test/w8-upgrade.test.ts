@@ -230,7 +230,7 @@ describe('upgrade from a stage-1 export (W8.3)', () => {
         ...was.activity,
         payments: was.activity.payments.map((x: any) => {
           const { created_at: createdAt, ...rest } = x;
-          return { ...rest, authorization_id: null, created_at: createdAt };
+          return { ...rest, authorization_id: null, refund_of: null, created_at: createdAt };
         }),
       });
       assert.deepEqual((await c.get('/requests?limit=200')).body, was.requests);

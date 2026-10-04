@@ -74,7 +74,7 @@ export function payRequest(ctx: Ctx): Result {
     if (!canCredit(requester, request.amount)) throw invalid('the payment would take the requester above 2^53');
     const payment = commitTransfer(st, {
       from: caller, to: requester, amount: request.amount, note: request.note, visibility,
-      requestId: request.id, settlementId: null, authorizationId: null, createdAt: issue(st, now),
+      requestId: request.id, settlementId: null, authorizationId: null, refundOf: null, createdAt: issue(st, now),
     });
     request.status = 'paid';
     request.paymentId = payment.id;

@@ -35,9 +35,10 @@ describe('POST /payments', () => {
     assert.equal(reply.status, 201);
     assert.deepEqual(Object.keys(reply.body).sort(), [
       'amount', 'authorization_id', 'created_at', 'currency', 'from_handle', 'from_user_id', 'note', 'payment_id',
-      'request_id', 'settlement_id', 'to_handle', 'to_user_id', 'visibility',
+      'refund_of', 'request_id', 'settlement_id', 'to_handle', 'to_user_id', 'visibility',
     ]);
     assert.equal(reply.body.authorization_id, null);
+    assert.equal(reply.body.refund_of, null);
     assert.equal(reply.body.from_user_id, 'u_ada');
     assert.equal(reply.body.to_handle, 'bob');
     assert.equal(reply.body.amount, 1500);

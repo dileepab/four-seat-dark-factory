@@ -25,7 +25,7 @@ export function createPayment(ctx: Ctx): Result {
     if (!canCredit(to, amount)) throw invalid('the payment would take the receiver above 2^53');
     const payment = commitTransfer(st, {
       from: caller, to, amount, note, visibility, requestId: null, settlementId: null, authorizationId: null,
-      createdAt: issue(st, now),
+      refundOf: null, createdAt: issue(st, now),
     });
     return paymentView(st, payment);
   });

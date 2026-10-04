@@ -293,7 +293,7 @@ export async function buildState(fixture: Fixture, resetMs: number): Promise<Sta
   // expired. A seeded captured_amount counts from creation, and seeded links count nothing (D84).
   const ts = st.lastTs;
   for (const p of fixture.payments) {
-    addPayment(st, { ...p, createdAt: p.createdAt ?? ts, seq: nextSeq(st) });
+    addPayment(st, { ...p, refundOf: null, createdAt: p.createdAt ?? ts, seq: nextSeq(st) });
   }
   for (const r of fixture.requests) {
     addRequest(st, { ...r, createdAt: ts, seq: nextSeq(st) });
