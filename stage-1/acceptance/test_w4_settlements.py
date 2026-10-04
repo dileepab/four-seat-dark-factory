@@ -201,6 +201,23 @@ def test_entry_errors_in_input_order_before_funds(world, transfers, status, code
     expect_error(world.ada.settle(transfers), status, code)
 
 
+@pytest.mark.parametrize("transfers", [
+    [t("nobody", "bob", 1), 7],
+    [t("bob", "bob", 1), "x"],
+    [t("dee", "bob", 10 ** 6), t("nobody", "bob", 1), []],
+    [t("ada", "bob", 1), t("bob", "bob", 1), None],
+    [t("ada", "nobody", 1), {"from_handle": "ada", "to_handle": "bob", "amount": 1}, 3.5],
+], ids=["404-then-number", "self-then-string", "funds-404-then-array", "ok-self-then-null", "404-ok-then-float"])
+def test_non_object_entry_anywhere_makes_the_batch_malformed(world, transfers):
+    """PLAN 3.10 (D37): the batch-shape check covers every entry before any entry is examined."""
+    before = balances(world)
+    feeds = all_payment_ids(world)
+    key = new_key()
+    expect_error(world.ada.settle(transfers, key=key), 422, "validation_failed")
+    assert balances(world) == before and all_payment_ids(world) == feeds
+    expect(world.ada.settle([t("ada", "bob", 1)], key=key), 201)   # the key was not claimed
+
+
 # ---------------------------------------------------------------- funds and atomicity (I22)
 
 @pytest.mark.parametrize("transfers", [
