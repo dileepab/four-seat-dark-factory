@@ -218,7 +218,9 @@ Error paths leave state unchanged:
 
 Nothing was built beyond the spec, and there is no stage-2 code.
 
-### Mutants (22: npm test for all of them; acceptance `--upto 3 -m "not container"`, suite 026f116, for R01–R09, R21, R21b and R29)
+### Mutants (21: npm test for all of them; acceptance `--upto 3 -m "not container"`, suite 026f116, for R01–R09, R21, R21b and R29)
+
+19 killed for the mutated reason, R21 equivalent in practice, R29 survived. (Correction to my W3 room message be4e590e, which said 22 mutants and 20 killed.)
 
 | ID | Break | Result |
 |---|---|---|
@@ -254,3 +256,68 @@ Nothing was built beyond the spec, and there is no stage-2 code.
 - §9 every table row: specification_rounding_table.
 - §4 money arriving later makes the same request payable: paying_while_short_is_409_and_payable_later.
 - §4 "no operation produces a balance outside ±2^53", on the pay path: **no test**. This is the block above.
+
+## W4: BLOCKED @ e143cf11dcb300af2fc9c4e4cdacc35df93eb0cb
+
+The verifier posted PASS for W4 on this commit (suite 026f116, room message 8a160745): npm test 77/77, the offline build, `run.sh --upto 4` 1025 passed, and the harness claims stage 1 with the one expected W5 failure.
+
+### Reason
+
+The code and plan 3.10 disagree on where a non-object entry in `transfers` is refused, and no test pins either order. W4.2 asks for "Validation per section 3.10".
+
+- Plan 3.10: "422 if `transfers` is missing, not an array, empty, longer than 32, or holds an entry that is not an object. Then each entry in input order".
+- Code: src/handlers/settlements.ts:18 checks object-ness inside `readTransfer`, which runs per entry in the input-order loop. An earlier entry's 404 or `self_payment` therefore wins over a later non-object entry.
+- Probe on clean e143cf1 (`.work/critic-h6bj/probe_settle.py`):
+  - `[{"from_handle":"ghost","to_handle":"bob","amount":1}, 5]` → 404 `not_found`. The plan says 422 `validation_failed`.
+  - `[{"from_handle":"ada","to_handle":"ada","amount":1}, "x"]` → 422 `self_payment`. The plan says 422 `validation_failed`.
+  - `[{"from_handle":"ada","to_handle":"ghost","amount":1}, null]` → 404. The plan says 422.
+  - `[[], {"from_handle":"ghost","to_handle":"bob","amount":1}]` → 422 `validation_failed`. Both orders agree here.
+- Why no test catches it: every non-object case in both suites puts the non-object entry first, or after a valid entry (`[5]`, `["x"]`, `[null]`, `[[]]`, `[valid, 7]`). Both orders answer those with 422 `validation_failed`.
+- Mutant S18 adds the plan's batch-level check before the entry loop. It survives both suites: npm test 77/77, and acceptance `--upto 4 -m "not container"` 1018 passed.
+
+### Missing evidence
+
+The planner decides which order holds. Either way a test must pin it.
+
+- (a) Recommended: keep plan 3.10. The builder checks that every entry is an object before the entry loop. A test pins `[t("nobody","bob",1), 7]` → 422 `validation_failed` and `[t("bob","bob",1), "x"]` → 422 `validation_failed`. This is the plan's text, and the closer reading of §11 ("transfers contains 1..32 objects", "malformed batch shape is 422").
+- (b) Amend plan 3.10 to the code's per-entry order. A test then pins `[t("nobody","bob",1), 7]` → 404 `not_found`. This one is tests-only.
+
+### Clause map (W4)
+
+| Plan clause | Code @ e143cf1 | Killing tests (mutant) |
+|---|---|---|
+| 3.10 and D18: 403 for a non-operator, before the key and the body | settlements.ts:42 | test_non_operator_is_403_before_key_and_body[no key] (S01) |
+| 3.10: `transfers` missing, not an array, empty, or more than 32 is 422 | :47–48 | test_malformed_batch_shape_is_422 (S09); test_key_that_failed_with_4xx_is_a_first_use_later[settlements] (S10) |
+| 3.10: a non-object entry is 422 before any entry is examined | :18, but per entry, which is the deviation above | **none pins the order** (S18) |
+| 3.10 per entry, in input order: handles present and strings, then amount, note and visibility (422, D27); unknown `from_handle`, then unknown `to_handle` (404); self 422 | `readTransfer` :19–29 | test_invalid_entry_is_422 (S17), test_entry_errors_in_input_order_before_funds (S08, S14), test_settlement_201_shape_and_members (S16) |
+| 3.10 and I22: net affordability (409), then the 2^53 guard (422) | :52–64 | test_net_affordability_chain_through_an_empty_wallet (S02, S15), test_settlement_past_2_53_is_422_and_changes_nothing (S13) |
+| 3.10, I22 and I23: one atomic step; members carry `settlement_id`, `request_id: null` and `created_at` = `committed_at`; balances move by net | :66–72, ledger.ts `recordPayment` | test_settlement_201_shape_and_members (S05, S04b), test_unaffordable_settlement_is_409_and_changes_nothing (S03, S03b) |
+| 3.10: 201 with payments in input order; replay | :73 and `idempotent` | test_members_are_listed_in_input_order_newest_first, test_replay_returns_the_complete_original |
+| I24 operator reach | no operator branch in `GET /requests` or `GET /activity` | test_operator_gains_no_reach_into_other_peoples_requests, test_members_follow_the_ordinary_feed_rule |
+
+The ledger split (`recordPayment` versus `commitTransfer`) keeps `POST /payments` and pay synchronous, with the same effects as before. Nothing was built beyond the spec, and there is no stage-2 code.
+
+### Mutants (16: npm test and acceptance `--upto 4 -m "not container"`, suite 026f116, for all of them)
+
+| ID | Break | Result |
+|---|---|---|
+| S01 | operator check after the key and the body | killed: both suites (non-operator without a key expects 403) |
+| S02 | affordability judged per transfer in input order | killed: test_net_affordability_chain_through_an_empty_wallet |
+| S03 | a failing settlement still moves the first transfer's money | killed: test_unaffordable_settlement_is_409_and_changes_nothing[second-unaffordable] |
+| S03b | a failing settlement still records a payment | killed: the same test, [empty-sender] |
+| S04 | each member stamped by its own `nextTs` | survived both: equivalent in practice, because one settlement runs within one millisecond |
+| S04b | members stamped 1 ms after `committed_at` | killed: test_settlement_201_shape_and_members; builder receipts test |
+| S05 | members carry `settlement_id: null` | killed: test_settlement_201_shape_and_members |
+| S08 | every entry's field rules checked before any entry's handles | killed: test_entry_errors_in_input_order_before_funds[case0] |
+| S09 | 33 transfers accepted | killed: test_malformed_batch_shape_is_422 (33 entries) |
+| S10 | empty `transfers` accepted | killed: both suites |
+| S13 | no 2^53 guard | killed: test_settlement_past_2_53_is_422_and_changes_nothing |
+| S14 | self-transfer checked before unknown handles | killed: test_entry_errors_in_input_order_before_funds[case6] |
+| S15 | gross outgoing instead of net | killed: test_net_affordability_chain_through_an_empty_wallet |
+| S16 | transfer note and visibility ignored | killed: test_settlement_201_shape_and_members |
+| S17 | a non-string handle inside a transfer is 400 | killed: test_invalid_entry_is_422 (missing `from_handle`) |
+| S18 | the plan's order: non-object entries rejected before the entry loop | **survived both: this block** |
+
+### Spec lines in W4 scope that the supplied checks never ask
+
+The supplied checks hold only test_sample.py::test_operator_can_settle_two_transfers. Every other §11 line is covered by test_w4_settlements.py, as trace rows N91–N97 list, and the kills above confirm the main ones. The gap here is at plan level: the order for a non-object entry.
