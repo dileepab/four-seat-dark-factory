@@ -1,6 +1,7 @@
 // W1: transport, errors, reset, authentication and GET /me.
 
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import {
   Client, expectError, fixture, login, PASSWORD, request, reset, startServer, user,
@@ -33,6 +34,32 @@ describe('transport', () => {
     expectError(await request(port, 'DELETE', '/me'), 404, 'not_found');
     expectError(await request(port, 'GET', '/auth/login'), 404, 'not_found');
     expectError(await request(port, 'GET', '/me/'), 404, 'not_found');
+  });
+
+  it('answers paths that do not percent-decode with 404, never 5xx (D33)', async () => {
+    const ada = await login(port, 'ada');
+    for (const path of ['/requests/%E0%A4%A/pay', '/requests/%ZZ/decline', '/requests/%/cancel', '/m%65', '/%E0%A4%A']) {
+      expectError(await ada.post(path, { json: {}, key: 'k' }), 404, 'not_found');
+      expectError(await ada.get(path), 404, 'not_found');
+    }
+  });
+
+  it('keeps an idle keep-alive connection open past 6 s (D35)', async () => {
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    const get = () => new Promise<{ status: number; reused: boolean }>((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/health', agent }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, reused: req.reusedSocket }));
+      });
+      req.on('error', reject);
+    });
+    try {
+      assert.deepEqual(await get(), { status: 200, reused: false });
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      assert.deepEqual(await get(), { status: 200, reused: true });
+    } finally {
+      agent.destroy();
+    }
   });
 
   it('refuses unreadable bodies with 400 malformed_request', async () => {
@@ -124,6 +151,21 @@ describe('reset', () => {
     });
     assert.equal(reply.status, 204);
     assert.equal(reply.text, '');
+  });
+
+  it('keeps a fixture payment settlement_id and defaults it to null (D34)', async () => {
+    await reset(port, fixture({
+      payments: [
+        { id: 'p_1', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 5, settlement_id: 'st_seed' },
+        { id: 'p_2', from_user_id: 'u_bob', to_user_id: 'u_ada', amount: 6, settlement_id: null },
+        { id: 'p_3', from_user_id: 'u_bob', to_user_id: 'u_cy', amount: 7 },
+      ],
+    }));
+    expectError(await request(port, 'POST', '/_test/reset', {
+      json: fixture({ payments: [{ id: 'p_1', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 5, settlement_id: 7 }] }),
+    }), 422, 'validation_failed');
+    const feed = (await (await login(port, 'cy')).get('/activity')).body.payments;
+    assert.deepEqual(feed.map((p: any) => [p.payment_id, p.settlement_id]), [['p_3', null], ['p_2', null], ['p_1', 'st_seed']]);
   });
 
   it('ignores the Authorization header', async () => {

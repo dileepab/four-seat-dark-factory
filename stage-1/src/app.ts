@@ -9,6 +9,9 @@ import { matchRoute } from './routes.ts';
 const API_BODY_LIMIT = 1024 * 1024; // 1 MiB (D8)
 const TEST_BODY_LIMIT = 64 * 1024 * 1024; // reset and import (D8)
 const MAX_HEADER_SIZE = 1024 * 1024 + 16 * 1024; // header blocks up to 1 MiB (D28)
+// Idle keep-alive connections outlive any client pool's idle reuse window (D35).
+const KEEP_ALIVE_TIMEOUT = 65_000;
+const HEADERS_TIMEOUT = 66_000;
 
 class BodyAborted extends Error {}
 
@@ -16,6 +19,8 @@ export function createApp(): http.Server {
   const server = http.createServer({ maxHeaderSize: MAX_HEADER_SIZE }, (req, res) => {
     void serve(req, res);
   });
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT;
+  server.headersTimeout = HEADERS_TIMEOUT;
   server.on('clientError', answerClientError);
   return server;
 }

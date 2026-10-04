@@ -29,6 +29,7 @@ interface SeedPayment {
   note: string;
   visibility: Visibility;
   requestId: string | null;
+  settlementId: string | null;
 }
 
 interface SeedRequest {
@@ -131,6 +132,7 @@ export function validateFixture(body: JsonObject): Fixture {
       id: o.id as string, fromUserId: o.from_user_id as string, toUserId: o.to_user_id as string,
       amount: o.amount as number, note: optionalString(o.note, `${what}.note`),
       visibility: visibility as Visibility, requestId: optionalRef(o.request_id, `${what}.request_id`),
+      settlementId: optionalRef(o.settlement_id, `${what}.settlement_id`),
     };
   });
 
@@ -177,7 +179,7 @@ export async function buildState(fixture: Fixture): Promise<State> {
   // Seeded records take the reset's time; fixture order is creation order (D15).
   const ts = nextTs(st);
   for (const p of fixture.payments) {
-    addPayment(st, { ...p, settlementId: null, createdAt: ts, seq: nextSeq(st) });
+    addPayment(st, { ...p, createdAt: ts, seq: nextSeq(st) });
   }
   for (const r of fixture.requests) {
     addRequest(st, { ...r, createdAt: ts, seq: nextSeq(st) });
