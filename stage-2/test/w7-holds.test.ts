@@ -311,6 +311,34 @@ describe('POST /authorizations/{id}/capture (W7.3)', () => {
     assert.deepEqual(await money(bob), { total: 3700, available: 3700, held: 0 });
   });
 
+  it('follows the key rows of the idempotency table', async () => {
+    const a = await hold(ada, 'bob', 2000);
+    const b = await hold(ada, 'bob', 1000);
+    const path = `/authorizations/${a.authorization_id}/capture`;
+    expectError(await bob.post(path, { json: {} }), 400, 'missing_idempotency_key');
+    expectError(await bob.post(path, { json: {}, key: '' }), 400, 'missing_idempotency_key');
+    expectError(await bob.post(path, { json: {}, key: 'k'.repeat(256) }), 422, 'validation_failed');
+    assert.equal((await bob.post(path, { json: { amount: 1, final: false }, key: 'k'.repeat(255) })).status, 201);
+    const k = key();
+    const first = await capture(bob, a.authorization_id, { amount: 100 }, k);
+    const second = await capture(bob, b.authorization_id, { amount: 100 }, k);
+    assert.deepEqual([first.status, second.status], [201, 201], 'the same key on two authorizations is two captures');
+    assert.notEqual(first.body.payment_id, second.body.payment_id);
+    assert.deepEqual(await money(bob), { total: 2701, available: 2701, held: 0 });
+  });
+
+  it('gives one 201 for 50 concurrent identical first captures', async () => {
+    const a = await hold(ada, 'bob', 2000);
+    const k = key();
+    const replies = await Promise.all(Array.from({ length: 50 }, () => capture(bob, a.authorization_id, { amount: 300, final: false }, k)));
+    assert.equal(replies.filter((r) => r.status === 201).length, 1);
+    assert.equal(replies.filter((r) => r.status === 200).length, 49);
+    for (const r of replies) assert.deepEqual(r.body, replies[0].body);
+    const [item] = await list(ada);
+    assert.deepEqual([item.captured_amount, item.remaining_amount, item.payment_ids.length], [300, 1700, 1]);
+    assert.deepEqual(await money(ada), { total: 9700, available: 8000, held: 1700 });
+  });
+
   it('refuses to take the receiver above 2^53 and changes nothing', async () => {
     await reset(port, fixture({
       users: [user('ada', 100), user('rich', 2 ** 53 - 10)],
@@ -454,6 +482,37 @@ describe('expiry by the clock (W7.6)', () => {
       ['expired', 300, 0, [p.payment_id]],
     );
     assert.deepEqual(await money(a), { total: 9700, available: 9700, held: 0 });
+  });
+
+  it('expiry applies only to open authorizations: captured and voided keep their status after the deadline', async () => {
+    await reset(port, fixture({ authorization_ttl_seconds: 1 }));
+    const [a, b] = await Promise.all([login(port, 'ada'), login(port, 'bob')]);
+    const cap = await hold(a, 'bob', 100);
+    const voided = await hold(a, 'bob', 200);
+    const partVoided = await hold(a, 'bob', 300);
+    await capture(b, cap.authorization_id);
+    await voidIt(a, voided.authorization_id);
+    await capture(b, partVoided.authorization_id, { amount: 50, final: false });
+    await voidIt(a, partVoided.authorization_id);
+    await sleep(Date.parse(partVoided.expires_at) - Date.now() + 50);
+    assert.deepEqual(ids(await list(a, '?status=captured')), [cap.authorization_id]);
+    assert.deepEqual(ids(await list(a, '?status=voided')), [partVoided, voided].map((x) => x.authorization_id));
+    assert.deepEqual(await list(a, '?status=expired'), []);
+    expectError(await capture(b, cap.authorization_id), 409, 'authorization_not_open');
+    expectError(await capture(b, voided.authorization_id), 409, 'authorization_not_open');
+    const again = await voidIt(a, voided.authorization_id);
+    assert.deepEqual([again.status, again.body.status], [200, 'voided']);
+    expectError(await voidIt(a, cap.authorization_id), 409, 'authorization_not_open');
+    assert.deepEqual(await money(a), { total: 9850, available: 9850, held: 0 });
+  });
+
+  it('a seeded expired authorization is expired whatever its expires_at (D50)', async () => {
+    await reset(port, fixture({ authorizations: [seedAuth('a_x', 'ada', 'bob', 100, { status: 'expired', expires_at: inHours(5) })] }));
+    const [a, b] = await Promise.all([login(port, 'ada'), login(port, 'bob')]);
+    assert.deepEqual((await list(a)).map((x) => [x.status, x.remaining_amount]), [['expired', 0]]);
+    expectError(await capture(b, 'a_x'), 409, 'authorization_expired');
+    expectError(await voidIt(a, 'a_x'), 409, 'authorization_not_open');
+    assert.deepEqual(await money(a), { total: 10_000, available: 10_000, held: 0 });
   });
 
   it('seeded open holds an hour past their deadline read expired right after the reset', async () => {
