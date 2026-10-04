@@ -183,6 +183,7 @@ VALID_EDGES = {
     "optional payment fields omitted": lambda fx: (fx["payments"][0].pop("note"),
                                                    fx["payments"][0].pop("visibility")),
     "empty users list": lambda fx: fx.update(users=[], payments=[], requests=[], settlement_operator_ids=[]),
+    "another currency code": lambda fx: fx.update(currency="USD", minor_units=2),
 }
 
 

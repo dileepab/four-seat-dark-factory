@@ -160,6 +160,12 @@ def test_service_works_within_the_resource_limits(offline_image, prefix, request
         from support import Service, fixture
         s = Service(base, "limits")
         try:
+            # PLAN 3.1 (D29): before any reset the service is empty, EUR with 2 minor units.
+            body = expect(s.api().post("/auth/signup", json={"email": "first@example.com",
+                                                             "password": "correct horse",
+                                                             "display_name": "First"}), 201)
+            me = s.api(body["token"]).me()
+            assert (me["balance"], me["currency"], me["minor_units"]) == (0, "EUR", 2)
             s.must_reset(fixture())
             assert s.client("ada").balance() == 10_000
             expect(s.signup("limits@example.com", "correct horse", "L"), 201)

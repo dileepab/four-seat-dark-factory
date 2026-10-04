@@ -381,6 +381,14 @@ def test_requests_are_newest_first_and_page(world):
     assert expect(world.ada.get("/requests", params={"offset": 99}), 200) == {"requests": [], "has_more": False}
 
 
+def test_request_list_default_limit_is_50(svc):
+    reqs = [{"id": f"rq_{i:03d}", "requester_id": "u_bob", "payer_id": "u_ada", "amount": 1} for i in range(55)]
+    svc.must_reset(fixture(standard_users(), requests=reqs))
+    page = expect(svc.client("ada").get("/requests"), 200)
+    assert len(page["requests"]) == 50 and page["has_more"] is True
+    assert [r["request_id"] for r in page["requests"]][:2] == ["rq_054", "rq_053"]
+
+
 def test_has_more_respects_the_filter(world):
     for i in range(3):
         expect(world.bob.ask("ada", i + 1), 201)
