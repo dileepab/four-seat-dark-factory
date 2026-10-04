@@ -278,7 +278,7 @@ Each normative line of stage-4.md, condensed (F1–F43), with the acceptance tes
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
 | Stage-4 handoff, parts 1-16 (plan 76b3707) | builder, verifier, critic | 15:51Z | critic (plan review started) | sent |
-| Critic plan review @ 76b3707 (REVIEW.md c8106d0: 1 defect, 1 wording, 7 criteria) -> plan revision: D106 (snapshots keep their payment form), I76, 3.6, 3.11, 3.12 wording, W19.3, W19.4, W20.4-W20.7, W21.2, W21.3 | builder, verifier, critic | 16:01Z | — | sent |
+| Critic plan review @ 76b3707 (REVIEW.md c8106d0: 1 defect, 1 wording, 7 criteria) -> plan revision: D106 (snapshots keep their payment form), I76, 3.6, 3.11, 3.12 wording, W19.3, W19.4, W20.4-W20.7, W21.2, W21.3 | builder, verifier, critic | 16:02Z | — | sent |
 
 ## 8. Stage close
 
