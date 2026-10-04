@@ -321,3 +321,17 @@ The ledger split (`recordPayment` versus `commitTransfer`) keeps `POST /payments
 ### Spec lines in W4 scope that the supplied checks never ask
 
 The supplied checks hold only test_sample.py::test_operator_can_settle_two_transfers. Every other §11 line is covered by test_w4_settlements.py, as trace rows N91–N97 list, and the kills above confirm the main ones. The gap here is at plan level: the order for a non-object entry.
+
+## W3: APPROVED @ 2455a8d53ed6a8b70a72b3f6fbd47d1ad1a87f56 (re-review)
+
+The verifier's PASS on 2455a8d stands with suite 78bab0a, a tests-only change (room message c519c506). The product commit is unchanged, so the earlier results carry over.
+
+I reran the blocking survivor against suite c059eb5, which contains 78bab0a's tests. I used a local server and `--upto 3 -m "not container" -k 2_53` on test_w3_requests.py.
+
+| ID | Result |
+|---|---|
+| R29 | killed: test_paying_a_request_past_2_53_is_422_and_changes_nothing ("expected 422 validation_failed, got 201", the mutated reason). Teardown also reports "I1 violated: sum 9007199254741981 != seeded 9007199254741982". |
+
+On clean 2455a8d both new tests pass: the one above, and test_paying_a_request_up_to_exactly_2_53_is_allowed, the boundary.
+
+R21 stays equivalent in practice. R21b shows that test_split_and_its_requests_share_one_created_at catches a real skew.
