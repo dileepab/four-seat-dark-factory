@@ -203,6 +203,54 @@ def test_an_imported_clock_at_exactly_a_deadline_expires_the_hold(svc):
     check_authorization(ada.auth("a_edge"), status="expired", remaining_amount=0)
 
 
+def test_a_seeded_expires_at_not_in_the_service_form_round_trips_exactly(svc, svc_b):
+    """W8.2, D48 (critic E16): expires_at comes back exactly as stored, after an import here and into a second
+    container, and a second export carries it unchanged."""
+    odd = {"a_odd": "2099-06-15T10:20:30.123456+05:30", "a_odd_cap": "2099-01-02T03:04:05-07:00",
+           "a_odd_exp": "2026-01-02T03:04:05.1+14:00", "a_odd_void": "2099-01-01t00:00:00z"}
+    svc.must_reset(fixture(standard_users(), authorizations=[
+        seeded_auth("a_odd", "ada", "bob", 100, expires_at=odd["a_odd"]),
+        seeded_auth("a_odd_cap", "bob", "ada", 50, status="captured", expires_at=odd["a_odd_cap"]),
+        seeded_auth("a_odd_exp", "cy", "ada", 70, expires_at=odd["a_odd_exp"]),
+        seeded_auth("a_odd_void", "ada", "dee", 30, status="voided", expires_at=odd["a_odd_void"])]))
+    svc.client("ada"), svc.client("bob"), svc.client("cy")
+    snap = svc.export()
+    svc_b.must_reset(fixture([user("other", 1)]))
+    expect(svc.import_(snap), 204)
+    expect(svc_b.import_(snap), 204)
+    for s in (svc, svc_b):
+        ada = s.client("ada")
+        for aid, written in odd.items():
+            assert ada.auth(aid)["expires_at"] == written, f"{aid} on {s.name}"
+        assert ada.auth("a_odd")["status"] == "open" and ada.auth("a_odd_exp")["status"] == "expired"
+        assert ada.money() == (10_000, 9_900, 100)
+        again = s.export().body["state"]
+        for aid, written in odd.items():
+            assert _record_holding_all(again, (aid, written)) is not None, \
+                f"the export from {s.name} after the import does not carry {aid}'s expires_at {written!r}"
+
+
+def test_a_partly_captured_hold_larger_than_the_total_round_trips(svc, svc_b):
+    """W8.2, 3.12 "the remainders" (critic E32): the holds check counts what a hold still holds, so a state the
+    service built imports back, here and into a second container."""
+    svc.must_reset(fixture(standard_users()))
+    ada, bob = svc.client("ada"), svc.client("bob")
+    aid = expect(ada.authorize("bob", 10_000), 201)["authorization_id"]
+    expect(bob.capture(aid, {"amount": 6_000, "final": False}), 201)
+    assert ada.money() == (4_000, 0, 4_000)                    # the amount 10 000 is above the total 4 000
+    before = observe(svc, ["ada", "bob"])
+    snap = svc.export()
+    svc_b.must_reset(fixture([user("other", 1)]))
+    expect(svc.import_(snap), 204)
+    expect(svc_b.import_(snap), 204)
+    for s in (svc, svc_b):
+        assert observe(s, ["ada", "bob"]) == before, s.name
+        check_authorization(s.client("ada").auth(aid), status="open", captured_amount=6_000, remaining_amount=4_000)
+    expect(svc_b.client("bob").capture(aid, {"amount": 4_000}), 201)
+    assert svc_b.client("ada").money() == (0, 0, 0)
+    check_authorization(svc_b.client("ada").auth(aid), status="captured", captured_amount=10_000)
+
+
 def test_spending_released_money_after_a_deadline_still_exports_and_imports(svc, svc_b):
     """W8.4 (plan c090e8c): an open hold past its deadline holds nothing, so its payer may spend that money."""
     svc.must_reset(fixture(standard_users(), ttl=1))
@@ -315,7 +363,15 @@ def _swap(record: dict, old, new) -> None:
         record[k] = new
 
 
-def corrupt(snap: Snapshot, how: str, api_view: dict):
+def _authorization_record(state, aid: str, status: str) -> dict:
+    """The exported authorization record with this id and stored status (3.11 field names)."""
+    rec = _record_holding_all(state, (aid, status))
+    assert rec is not None and "amount" in rec and "captured_amount" in rec, \
+        f"no authorization record holds {aid!r} with status {status!r}; this probe cannot run"
+    return rec
+
+
+def corrupt(snap: Snapshot, how: str, api_view: dict, rich: dict | None = None):
     body = copy.deepcopy(snap.body)
     state = body["state"]
     if how == "schema missing":
@@ -323,6 +379,15 @@ def corrupt(snap: Snapshot, how: str, api_view: dict):
         return body
     if how.startswith("schema "):
         state["schema"] = json.loads(how.split(" ", 1)[1])
+        return body
+    closed = {"captured above amount, captured": ("captured", "captured"),
+              "captured above amount, voided": ("voided_partial", "voided"),
+              "captured above amount, expired": ("a_seed_exp", "expired")}
+    if how in closed:
+        which, status = closed[how]
+        aid = which if which.startswith("a_seed") else rich["auths"][which]["authorization_id"]
+        rec = _authorization_record(state, aid, status)
+        rec["captured_amount"] = rec["amount"] + 1
         return body
     # The capture payment copies the note, so the authorization is the record with the note and the amount.
     rec = _record_holding_all(state, (SENTINEL_NOTE, SENTINEL_AMOUNT))
@@ -349,7 +414,9 @@ def corrupt(snap: Snapshot, how: str, api_view: dict):
 
 
 REJECTS = ["schema 0", "schema 3", 'schema "2"', "schema null", "schema 2.5", "schema missing",
-           "unknown status", "captured above amount", "duplicate authorization id", "expires_at not RFC 3339",
+           "unknown status", "captured above amount", "captured above amount, captured",
+           "captured above amount, voided", "captured above amount, expired", "duplicate authorization id",
+           "expires_at not RFC 3339",
            "payment_ids not strings", "dangling payer", "open remainder above the payer's total"]
 
 
@@ -360,6 +427,26 @@ def test_rejected_import_changes_nothing(svc, how):
     api_view = svc.client("zed").auth(rich["auths"]["partial"]["authorization_id"])
     expect(svc.client("ada").authorize("cy", 1), 201)        # the destination now differs from the export
     before = observe(svc)
-    expect_error(svc.import_raw(corrupt(snap, how, api_view)), 422, "validation_failed")
+    expect_error(svc.import_raw(corrupt(snap, how, api_view, rich)), 422, "validation_failed")
     assert observe(svc) == before
     expect(svc.import_(snap), 204)                             # the uncorrupted export still imports
+
+
+def test_an_exact_deadline_hold_above_the_total_still_imports(svc):
+    """W8.4, 3.12 "open authorizations whose expires_at is after the import's now" (critic E26): a hold whose
+    deadline is the import's now holds nothing, so its remainder above the payer's total does not refuse it."""
+    deadline = "2099-06-15T10:20:30.000+00:00"
+    svc.must_reset(fixture(standard_users(), authorizations=[
+        seeded_auth("a_edge", "ada", "bob", 400, expires_at=deadline)]))
+    svc.client("ada"), svc.client("bob")        # log in now, so nothing after the import issues a timestamp
+    snap = svc.export()
+    body = copy.deepcopy(snap.body)
+    assert _set_every_timestamp(body["state"], deadline) >= 3, "too few timestamps in the export; this probe cannot run"
+    rec = _authorization_record(body["state"], "a_edge", "open")
+    rec["amount"] = 15_000                       # above ada's total of 10 000
+    expect(svc.import_(Snapshot(body, json.dumps(body), snap.total, copy.deepcopy(snap.accounts))), 204)
+    ada, bob = svc.client("ada"), svc.client("bob")
+    check_authorization(ada.auth("a_edge"), status="expired", amount=15_000, remaining_amount=0)
+    assert ada.money() == (10_000, 10_000, 0)
+    expect_error(bob.capture("a_edge"), 409, "authorization_expired")
+    assert ada.money() == (10_000, 10_000, 0)
