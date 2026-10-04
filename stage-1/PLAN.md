@@ -21,7 +21,7 @@ States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, 
 
 - The builder takes W1 to W5 in order and hands off each one as soon as its gate is green, then starts the next. The verifier writes W6 from this plan and the specification at once, without reading the implementation.
 - Routing. Builder: `HANDOFF Wn` to the verifier, the critic and the planner. Verifier: PASS or FAIL to the critic and the planner, and to the builder on FAIL. Critic: APPROVED or BLOCKED to the planner, and to the builder on BLOCKED. The planner marks an item ACCEPTED when a PASS and an APPROVED name the same commit. Questions go to the planner, who decides.
-- A verdict covers the item handed off plus every earlier item: each verdict run is the whole acceptance suite and the supplied checks on that commit.
+- A verdict covers the item handed off plus every earlier item. For Wn the verdict run is: the offline build and run, the builder's tests, every acceptance test marked for W1 to Wn (the verifier marks each test with the item it checks), and the supplied checks. Supplied checks that need a route from a later item (W(n+1) onward) are listed as expected failures with their names; every other failure counts. From W5 on, everything counts.
 - Check command (new `--out` every run; seat letters keep runs apart: b builder, v verifier, c critic, p planner):
   `/Users/Dileepa/dark-factory-v3/scripts/harness.sh run --track pocketful --repo <repo or worktree> --stage 1 --out /Users/Dileepa/dark-factory-v3/.work/checks/s1-<letter><nn>`
 - Final check (verifier, on the final commit, main repository with a clean tree):
@@ -360,4 +360,4 @@ Filled in once W6 is committed: each normative line of stage-1.md, the test that
 |---|---|---|---|---|
 | Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic (plan review), verifier (W6), builder (W1), all by 06:40Z | acknowledged |
 | HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
-| Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) | builder, verifier, critic | 06:5xZ | — | sent |
+| Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) and verdict scope (section 0) | builder, verifier, critic | 06:53Z | — | sent |
