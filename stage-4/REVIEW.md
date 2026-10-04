@@ -388,3 +388,26 @@ On f4c2f9e, the clean run of `test_w20_batches.py`, `test_w20_concurrency.py` an
 1. without `refund_of` on one payment;
 2. without `correction_batch_id` on a batch revision;
 3. without `correction_batch_id` on a revision 1.
+
+## W21 @ 328508d, suite c6daf51: APPROVED
+
+- Commit: `328508d01e35040e46f6d76317cc3c9c258453b0`, the same commit as the BLOCKED entry above. No product code changed.
+- Suite: `c6daf51d633142b02ffb5d88d128ba3a6bfed3ad` (W22.9). It changes tests only: `test_w21_export.py` gains six cases in `test_rejected_schema_4_import_changes_nothing`.
+- Verifier: PASS at 328508d on suite da8d92b. It carries over to c6daf51, because the touched file passes on 328508d ("24 passed").
+- Reason: VA14 and VA15, the two survivors, now fail tests for their reason. So do VA05, VA11 and VA12, which only the builder tests killed before. The other results carry over (PROTOCOL: a tests-only commit, the critic reruns its survivors).
+
+### What I reran
+
+- Files: the export files (`test_w21_export.py`, `test_w5_export_import.py`, `test_w8_export_import.py` and `test_w17_export.py`), `--upto 21`, `-m "not container"`, two local servers. Logs are in `rerun_logs_s4_c6daf51/`.
+- The clean run on 328508d: "117 passed".
+- Each mutant fails only its own new case or cases, with "expected 422 validation_failed, got 204". The teardown error after each comes from the state the mutant accepted.
+  - VA14, a payment without `refund_of` accepted as null: fails "a payment without refund_of".
+  - VA15, a revision without `correction_batch_id` accepted as null: fails "a batch revision without correction_batch_id" and "a revision 1 without correction_batch_id".
+  - VA05, a refund linked to a settlement accepted: fails "a refund linked to a settlement".
+  - VA11, revision 1 with a batch id accepted: fails "a revision 1 with a correction_batch_id".
+  - VA12, any snapshot payment form accepted: fails "a snapshot payment form of 5".
+
+### Result
+
+- 27 mutants. The acceptance suite now kills every one of them on its own except VA10, which is equivalent. The builder tests kill 24.
+- W21 at 328508d is APPROVED on suite c6daf51.
