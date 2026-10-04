@@ -61,6 +61,16 @@ export interface PayRequest {
   seq: number;
 }
 
+// A completed idempotent call: the parsed body and the exact response it produced.
+export interface IdemRecord {
+  userId: string;
+  method: string;
+  path: string;
+  key: string;
+  body: unknown;
+  response: unknown;
+}
+
 export interface State {
   currency: string;
   minorUnits: number;
@@ -73,6 +83,7 @@ export interface State {
   requests: PayRequest[]; // creation order
   requestsById: Map<string, PayRequest>;
   operators: Set<string>;
+  idem: Map<string, IdemRecord>; // see idempotency.ts for the map key
   seq: number; // creation counter, the tie-break for equal timestamps
   lastTs: string; // the latest timestamp issued
 }
@@ -90,6 +101,7 @@ export function emptyState(): State {
     requests: [],
     requestsById: new Map(),
     operators: new Set(),
+    idem: new Map(),
     seq: 0,
     lastTs: formatTs(Date.now()),
   };

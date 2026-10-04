@@ -3,6 +3,7 @@
 import type { Ctx, Result } from './context.ts';
 import { login, signup } from './handlers/auth.ts';
 import { me } from './handlers/me.ts';
+import { activity, createPayment } from './handlers/payments.ts';
 import { health, reset } from './handlers/system.ts';
 
 export interface Route {
@@ -18,6 +19,8 @@ const ROUTES: Route[] = [
   { method: 'POST', path: '/auth/signup', handler: signup },
   { method: 'POST', path: '/auth/login', handler: login },
   { method: 'GET', path: '/me', handler: me },
+  { method: 'POST', path: '/payments', handler: createPayment },
+  { method: 'GET', path: '/activity', handler: activity },
 ];
 
 export interface RouteMatch {
