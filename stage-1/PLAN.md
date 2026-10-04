@@ -8,12 +8,12 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | PLANNED | — |
+| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | BUILDING | — |
 | W2 | builder | Idempotency engine, payments, activity feed | PLANNED | — |
 | W3 | builder | Requests and splits | PLANNED | — |
 | W4 | builder | Settlements | PLANNED | — |
 | W5 | builder | Export and import | PLANNED | — |
-| W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | PLANNED | — |
+| W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | BUILDING | — |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
 
@@ -352,3 +352,4 @@ Filled in once W6 is committed: each normative line of stage-1.md, the test that
 
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
+| Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic 06:38Z (plan review), verifier 06:40Z (W6), builder 06:41Z (W1) | acknowledged |
