@@ -1,17 +1,22 @@
-"""Pytest wiring for the stage-2 acceptance suite (verifier-owned).
+"""Pytest wiring for the stage-3 acceptance suite (verifier-owned).
 
 Options:
   --base-url URL          the service under test (required)
   --second-base-url URL   a second, independent instance of the same image; used by
                           the import-into-another-container checks (I26, W5.2, W8.2)
   --previous-base-url URL a service built from the frozen stage-1/ folder; used by the
-                          upgrade checks (I37, W8.3, W10.7)
+                          upgrade checks (I37, W8.3, W10.7, W17.3)
+  --previous2-base-url URL a service built from the frozen stage-2/ folder; used by the
+                          stage-2 upgrade checks (I65, W17.3)
   --stage-dir DIR         the stage folder; needed by the container checks (W1.1, W1.2, W9.1)
   --container-prefix P    docker name prefix for containers the container checks start
   --spare-port N          first of three free host ports for the container checks
   --shots DIR             where the browser checks save one screenshot per named UI state
-  --upto N                run only checks for work items up to WN (default 13: everything).
-                          Stage-1 regression checks carry items 1 to 5 and always run.
+  --upto N                run only checks for work items up to WN (default 17: everything).
+                          The stage-1 and stage-2 regression checks carry items 1 to 13 and
+                          always run. From --upto 14 on, every test's teardown also checks
+                          I1 in historical views and, for a consistent seeded history, I2 at
+                          every instant of the tracked accounts' history (sampled).
 
 Every test carries `item(n)`: the work item whose behaviour it needs. A verdict on
 Wn runs with `--upto n`.
@@ -36,19 +41,22 @@ VIEWPORTS = {"w375": {"width": 375, "height": 812}, "w1280": {"width": 1280, "he
 
 
 def pytest_addoption(parser):
-    g = parser.getgroup("pocketful stage-2 acceptance")
+    g = parser.getgroup("pocketful stage-3 acceptance")
     g.addoption("--base-url", default=None)
     g.addoption("--second-base-url", default=None)
     g.addoption("--previous-base-url", default=None)
+    g.addoption("--previous2-base-url", default=None)
     g.addoption("--stage-dir", default=None)
     g.addoption("--container-prefix", default="pf-verifier-acc")
     g.addoption("--spare-port", type=int, default=18210)
     g.addoption("--shots", default=None)
-    g.addoption("--upto", type=int, default=13)
+    g.addoption("--upto", type=int, default=17)
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "item(n): the highest work item (W1..W13) this check needs")
+    config.addinivalue_line("markers", "item(n): the highest work item (W1..W17) this check needs")
+    Service.history_checks = config.getoption("--upto") >= 14
+    Service.statement_checks = config.getoption("--upto") >= 15
     config.addinivalue_line("markers", "container: starts its own containers with docker")
 
 
@@ -67,17 +75,19 @@ def pytest_collection_modifyitems(config, items):
 def base_url(request) -> str:
     url = request.config.getoption("--base-url")
     if not url:
-        pytest.fail("--base-url is required (stage-2/acceptance/run.sh supplies it)")
+        pytest.fail("--base-url is required (stage-3/acceptance/run.sh supplies it)")
     return url.rstrip("/")
 
 
 @pytest.fixture
 def svc(base_url):
-    """The service under test. Teardown asserts I1, I2 and I30 over every tracked account."""
+    """The service under test. Teardown asserts I1, I2 and I30 over every tracked account (and, from
+    --upto 14, I1 and I2 in historical views)."""
     s = Service(base_url, "A")
     yield s
     try:
         s.assert_invariants(" after the test")
+        s.assert_history_invariants(" after the test")
     finally:
         s.close()
 
@@ -87,11 +97,12 @@ def svc_b(request):
     url = request.config.getoption("--second-base-url")
     if not url:
         pytest.fail("--second-base-url is required for the second-container checks "
-                    "(stage-2/acceptance/run.sh starts both containers)")
+                    "(stage-3/acceptance/run.sh starts both containers)")
     s = Service(url, "B")
     yield s
     try:
         s.assert_invariants(" after the test")
+        s.assert_history_invariants(" after the test")
     finally:
         s.close()
 
@@ -102,8 +113,20 @@ def prev(request):
     url = request.config.getoption("--previous-base-url")
     if not url:
         pytest.fail("--previous-base-url is required for the upgrade checks "
-                    "(stage-2/acceptance/run.sh builds the frozen stage-1/ and starts it)")
+                    "(stage-3/acceptance/run.sh builds the frozen stage-1/ and starts it)")
     s = Service(url, "stage-1")
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def prev2(request):
+    """The frozen stage-2 service: the source of the stage-2 upgrade checks (W17.3)."""
+    url = request.config.getoption("--previous2-base-url")
+    if not url:
+        pytest.fail("--previous2-base-url is required for the stage-2 upgrade checks "
+                    "(stage-3/acceptance/run.sh builds the frozen stage-2/ and starts it)")
+    s = Service(url, "stage-2")
     yield s
     s.close()
 

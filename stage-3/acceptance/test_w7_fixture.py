@@ -148,7 +148,7 @@ def test_defaults_and_unknown_fields(svc):
     a = check_authorization(svc.client("bob").auth("a_min"), status="open", captured_amount=0,
                             remaining_amount=50, note="", visibility="public", payment_id=None,
                             payment_ids=[], from_handle="ada")
-    assert not a["created_at"].startswith("2001"), "a seeded created_at is ignored"
+    assert a["created_at"] == "2001-01-01T00:00:00Z", "PLAN 3.10 (S3, D68): a seeded created_at is kept exactly as written"
     assert set(a) == AUTHZ_KEYS
 
 

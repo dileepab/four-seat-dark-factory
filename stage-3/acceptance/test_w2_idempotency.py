@@ -2,8 +2,8 @@
 stage-2 PLAN 3.9, D61).
 
 I15 replay, I16 key reuse, I17 concurrent first use, I18 failures claim nothing, I19 key scope.
-Every scenario runs on each of the seven idempotent write paths; each path carries the work
-item that introduces it.
+Every scenario runs on each of the eight idempotent write paths (stage 3 adds
+`POST /payments/{id}/corrections`, W16.2); each path carries the work item that introduces it.
 """
 from __future__ import annotations
 
@@ -143,6 +143,26 @@ class Capture(Op):
         expect(world.ada.void(ctx["aid"]), 200)
 
 
+class Corrections(Op):
+    """Stage 3, the eighth path (W16.2): ada corrects her payment to bob."""
+    name = "corrections"
+
+    def setup(self, world):
+        p = expect(world.ada.pay("bob", 100), 201)
+        return {"pid": p["payment_id"], "at": p["created_at"]}
+
+    def path(self, ctx): return f"/payments/{ctx['pid']}/corrections"
+    def body(self, ctx): return {"expected_revision": 1, "amount": 60, "effective_at": ctx["at"], "reason": "fix"}
+    def alt_body(self, ctx): return {"expected_revision": 1, "amount": 61, "effective_at": ctx["at"], "reason": "fix"}
+    def bad_body(self, ctx): return {"expected_revision": 1, "amount": 60, "effective_at": ctx["at"], "reason": ""}
+
+    def float_body(self, ctx):
+        return '{"reason": "fix", "effective_at": "%s", "amount": 6E1, "expected_revision": 1.0}' % ctx["at"]
+
+    def mutate(self, world, ctx, first):
+        expect(world.ada.correct(ctx["pid"], 2, 70, ctx["at"]), 201)
+
+
 OPS = [
     pytest.param(Payments(), marks=pytest.mark.item(2), id="payments"),
     pytest.param(Requests(), marks=pytest.mark.item(3), id="requests"),
@@ -151,6 +171,7 @@ OPS = [
     pytest.param(Settlements(), marks=pytest.mark.item(4), id="settlements"),
     pytest.param(Authorizations(), marks=pytest.mark.item(7), id="authorizations"),
     pytest.param(Capture(), marks=pytest.mark.item(7), id="capture"),
+    pytest.param(Corrections(), marks=pytest.mark.item(16), id="corrections"),
 ]
 
 pytestmark = pytest.mark.item(2)
@@ -166,6 +187,9 @@ def snapshot(world, op) -> dict:
             snap[f"money_{h}"] = world.svc.client(h).money()
             snap[f"auth_{h}"] = sorted((a["authorization_id"], a["status"], a["captured_amount"])
                                        for a in world.svc.client(h).auths())
+    elif op.name == "corrections":
+        snap["revisions"] = {p["payment_id"]: [(r["revision"], r["amount"]) for r in world.ada.revisions(p["payment_id"])]
+                             for p in world.ada.feed() if p["from_handle"] == "ada"}
     elif op.name != "payments":
         for h in ("ada", "bob", "cy"):
             snap[f"req_{h}"] = sorted((r["request_id"], r["status"]) for r in world.svc.client(h).requests())

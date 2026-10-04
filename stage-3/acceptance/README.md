@@ -1,26 +1,26 @@
-# Stage 2 acceptance suite
+# Stage 3 acceptance suite
 
 Owned by the verifier. Written from the specifications
-(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md`, `stage-2.md`) and `stage-2/PLAN.md`, not
-from the implementation. Black-box: it talks to the service over HTTP and drives real Chromium
+(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md`, `stage-2.md`, `stage-3.md`) and `stage-3/PLAN.md`,
+not from the implementation. Black-box: it talks to the service over HTTP and drives real Chromium
 through Playwright. It also uses `docker` for the container checks and to build the frozen
-`stage-1/` as the previous service of the upgrade checks.
+`stage-1/` and `stage-2/` folders as the previous services of the upgrade checks.
 
 ## Run
 
 From the repository root:
 
-    stage-2/acceptance/run.sh                         # build, start A, B and the stage-1 P; run everything
-    stage-2/acceptance/run.sh --upto 7                # stage-1 regression (items 1-5) and W7
-    stage-2/acceptance/run.sh --shots .work/verifier-h6bh/shots/<short-hash>   # save one PNG per UI state
-    stage-2/acceptance/run.sh --name pf-builder-acc --port 18101              # another seat's names and ports
-    stage-2/acceptance/run.sh --stage-dir <worktree>/stage-2                  # a clean worktree of a commit
-    stage-2/acceptance/run.sh -- -k authoriz -x                               # extra pytest arguments
+    stage-3/acceptance/run.sh                         # build, start A, B, the stage-1 P and the stage-2 Q; run everything
+    stage-3/acceptance/run.sh --upto 14               # stage-1 and stage-2 regression (items 1-13) and W14
+    stage-3/acceptance/run.sh --shots .work/verifier-h6bh/shots/<short-hash>   # save one PNG per UI state
+    stage-3/acceptance/run.sh --name pf-builder-acc --port 18101              # another seat's names and ports
+    stage-3/acceptance/run.sh --stage-dir <worktree>/stage-3                  # a clean worktree of a commit
+    stage-3/acceptance/run.sh -- -k statement -x                              # extra pytest arguments
 
 Against services that are already running (the container checks are deselected):
 
-    stage-2/acceptance/run.sh --base-url http://127.0.0.1:8080 --second-base-url http://127.0.0.1:8081 \
-        --previous-base-url http://127.0.0.1:8082
+    stage-3/acceptance/run.sh --base-url http://127.0.0.1:8080 --second-base-url http://127.0.0.1:8081 \
+        --previous-base-url http://127.0.0.1:8082 --previous2-base-url http://127.0.0.1:8083
 
 It needs Python 3.11+ with `pytest`, `httpx` and Playwright with Chromium. It uses
 `~/df-spec/.venv/bin/python` (the harness venv) unless `PYTHON` names another interpreter.
@@ -29,24 +29,18 @@ It needs Python 3.11+ with `pytest`, `httpx` and Playwright with Chromium. It us
 
 | File | Covers |
 |---|---|
-| `support.py` | HTTP client, envelope and representation checks (Me, Payment, Authorization), fixtures, the `Service` model that asserts I1, I2 and I30 after every test and during every burst |
-| `ui.py` | browser helpers: `data-testid` lookup, request recording, `page.route` faults (holds, aborts before and after the server commits, 5xx, non-JSON), screenshots, the I46 checks (scroll, labels, contrast, boundaries, focus) |
-| `conftest.py` | options, the `item(n)` selection, `svc`, `svc_b`, `prev` (stage-1), `world`, and `page`/`ui`, which run each browser check at 375x812 and at 1280x800 |
-| `test_w1_*` to `test_w5_*` | the stage-1 suite on the stage-2 contract (regression, items 1-5, always run): `GET /me` money fields, `authorization_id` on payments, the seven idempotent paths, the 401 matrix with the new endpoints |
-| `test_w7_holds.py` | W7.1, W7.2: `GET /me`, `POST /authorizations`, its error rows and precedence |
-| `test_w7_capture.py` | W7.3: capture, final and nonfinal, error rows, D50 precedence, replays, 2^53 guard |
-| `test_w7_void.py`, `test_w7_list.py` | W7.4, W7.5 |
-| `test_w7_expiry.py` | W7.6: expiry by the clock, seeded expiry compared as an instant |
-| `test_w7_funds.py`, `test_w7_fixture.py`, `test_w7_concurrency.py` | W7.7, W7.8, W7.9 |
-| `test_w8_export_import.py` | W8.1, W8.2, W8.4: schema 2, round trips, rejected imports |
-| `test_w8_upgrade.py` | W8.3: an unchanged export of the frozen stage-1 build imported into stage 2 |
-| `test_w9_routes.py` | W9.1 over HTTP: HTML routes, `Accept` negotiation, headers, assets, the `--network=none` container |
-| `test_w9_session.py` | W9.2-W9.4: signup, login, logout, session, navigation, I48 |
-| `test_w10_wallet.py` | W10.1, W10.2, W10.4-W10.6: wallet numbers, pay and request forms, feed (paging, de-dup, a failed later page), refresh (latest wins, a stale failure ignored) |
-| `test_w10_uncertain.py` | W10.3, W10.7: unknown outcomes (lost, 5xx, 4xx without the envelope, a 2xx that is not a JSON object), the 4 s limit from both sides, retries, the upgrade in the browser |
-| `test_w11_requests_ui.py`, `test_w11_split_ui.py`, `test_w11_authorizations_ui.py` | W11.1-W11.3 |
-| `test_w11_states.py` | W11.4: every screen in every named state at both widths (I46 and screenshots); the longest names, handles and notes at 375 |
-| `test_w13_presentation.py` | W13.1 (an amount to pay is not coloured as money received), W13.2 (the expiry text is one line at 375, up to 64 characters), W13.3 (the capture button's text is in its input's label) |
+| `support.py` | HTTP client, envelope and representation checks (Me and its history views, Payment, Authorization with `closed_at`, Revision, Statement and Entry), exact instants (`instant`, `fmt_instant`, `shifted`: never rounded), `read_statement` (a first page plus every page of its snapshot, checked against I54), fixtures, the `Service` model that asserts I1, I2 and I30 after every test and during every burst, and from `--upto 14` I1 and I2 in historical views |
+| `ui.py` | browser helpers: `data-testid` lookup, request recording, `page.route` faults, screenshots, the I46 checks |
+| `conftest.py` | options, the `item(n)` selection, `svc`, `svc_b`, `prev` (stage-1), `prev2` (stage-2), `world`, and `page`/`ui`, which run each browser check at 375x812 and at 1280x800 |
+| `test_w1_*` to `test_w13_*` | the stage-1 and stage-2 suites on the stage-3 contract (regression, items 1-13, always run): `closed_at` on authorizations, seeded `created_at` honoured, export schema 3 (the "invalid schema" probes use 4), the eighth idempotent path in `test_w2_idempotency.py` (marked 16), the stage-2 browser checks unchanged |
+| `test_w14_instants.py` | W14.4, W14.5: the PLAN 3.4 grammar on `as_of` and `known_at` (valid forms echoed, invalid 422), raw `+`, `%2B`, repeats, 401 first |
+| `test_w14_history.py` | W14.1, W14.3-W14.5: seeded `created_at` (exact, ordering by instant, future and invalid 422), strictly increasing issued times, opening balances, inclusive and exact `as_of`, `known_at`, I1 in every view |
+| `test_w14_holds.py` | W14.6, W14.7: historical holds (creation, nonfinal and closing captures, void, expiry, future deadlines, seeded open and closed holds) and `closed_at` |
+| `test_w15_statements.py` | W15.1-W15.7: shape, order and ties, windows, only the caller's payments, pages, `known_at`, snapshots, holds are not entries |
+| `test_w16_corrections.py` | W16.1-W16.10: the new revision, idempotency beyond the shared scenarios, every field rule, precedence, permissions, linked payments, stale revisions, money, funds and historical overdraft, history reads, the revisions read |
+| `test_w16_concurrency.py` | W16.6, W18.4: 50 corrections with one expected revision, retries, corrections racing payments and captures, snapshot pages read while corrections commit |
+| `test_w17_export.py` | W17.1, W17.2, W17.4: schema 3, round trips (revisions, opening balances, views, statements, snapshot tokens, correction replays), rejected schema-3 states |
+| `test_w17_upgrade.py` | W17.3: unchanged exports of the frozen stage-1 and stage-2 builds imported into stage 3 |
 
 Each test carries `item(n)`, the highest work item it needs. `--upto n` runs the checks up to Wn.
 
@@ -56,8 +50,13 @@ After every test the `svc` fixture logs in as every account the test knows and a
 - I1: the `total`s sum to the seeded total.
 - I2: no negative `total`, `available` or `held`, and `held <= total`.
 - I30: `balance == total`, `available == total - held`, and `held` equals the open outgoing remainders that `GET /authorizations` lists.
+- From `--upto 14` (`Service.assert_history_invariants`): I1 in historical views (`as_of` at the epoch and far in the future, `known_at` at the epoch, and at up to 12 instants of the accounts' history), and, when the seeded history is consistent (`history_is_consistent`), I2 and I60 at those instants: `total` and `available` never negative, `balance == total`, `available == total - held`. The history instants come from the feed before W15 and from the statement (effective times) from W15 on.
 
 `Service.burst` releases up to 50 requests together. While they run, it reads every known `/me` in a loop (I2 and I30 during the burst), and it asserts I1 when they finish.
+
+## Time marks
+
+Every instant a test compares with comes from the service (W18.5): a `created_at`, `recorded_at`, `expires_at` or `closed_at`, or `Api.service_now`, which creates a pending request and returns its `created_at`. Microsecond, nanosecond and offset forms are built from those values by `fmt_instant` and `shifted`, exactly.
 
 ## Screenshots
 

@@ -128,7 +128,8 @@ def test_upgraded_state_round_trips_through_a_stage_2_export(prev, svc, svc_b):
     rich = upgrade(prev, svc)
     a = expect(svc.client("ada").authorize("bob", 50), 201)
     snap2 = svc.export()
-    assert snap2.body["state"].get("schema") == 2
+    # Schema 3 from W17.1 (test_w8_export_import: test_export_has_format_version_1_and_schema_3).
+    assert snap2.body["state"].get("schema") in (2, 3)
     before = observe(svc, rich["handles"])
     expect(svc_b.import_(snap2), 204)
     after = observe(svc_b, rich["handles"])

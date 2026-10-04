@@ -1,8 +1,8 @@
-"""Shared helpers for the stage-2 acceptance suite.
+"""Shared helpers for the stage-3 acceptance suite.
 
 Owned by the verifier. Written from the specifications
-(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md` and `stage-2.md`) and
-`stage-2/PLAN.md` only, never from the implementation. Everything here talks to the
+(`/Users/Dileepa/df-spec/pocketful/spec/stage-1.md`, `stage-2.md` and `stage-3.md`) and
+`stage-3/PLAN.md` only, never from the implementation. Everything here talks to the
 service over HTTP.
 
 Invariant tracking: a `Service` remembers the total seeded by the last accepted
@@ -12,9 +12,17 @@ seeded total), I2 (no negative `total`, `available` or `held`; `held <= total`) 
 (`balance == total`, `available == total - held`, `held` = the open outgoing
 remainders). `Service.burst` asserts I2 on reads taken *during* a burst and I1 right
 after it.
+
+Stage 3 (`Service.history_checks`, on for `--upto 14` and later): after each test the
+`svc` fixture also asserts I1 in historical views (the `total`s at `as_of`/`known_at`
+instants sum to the seeded total) and, for a consistent seeded history, I2 and I60 at
+every instant at which a tracked account's payments take effect or its holds change
+(`Service.assert_history_invariants`). Exact instants (PLAN 3.4) are handled by
+`instant` and `fmt_instant`, which never round.
 """
 from __future__ import annotations
 
+import calendar
 import copy
 import json as _json
 import re
@@ -24,6 +32,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from fractions import Fraction
 from typing import Any, Callable
 
 import httpx
@@ -33,6 +42,8 @@ RESET_TIMEOUT = 10.0      # §2 and §10: reset, export and import
 MAX_AMOUNT = 1_000_000_000
 TWO_53 = 2 ** 53
 MAX_TRACKED_FOR_CHECK = 80   # accounts summed after each test; larger worlds opt out
+MAX_TRACKED_FOR_HISTORY = 8  # accounts whose history is walked after each test (stage 3)
+HISTORY_SAMPLE = 12          # instants checked per teardown, spread over the whole history
 
 _UNSET = object()
 
@@ -161,6 +172,61 @@ class Api:
         m = self.me()
         return m["total"], m["available"], m["held"]
 
+    # stage 3: history, statements, corrections
+    def me_at(self, as_of: str | None = None, known_at: str | None = None) -> dict:
+        """GET /me?as_of=&known_at= (each only when given), checked per PLAN 3.6 and I60."""
+        params = {k: v for k, v in (("as_of", as_of), ("known_at", known_at)) if v is not None}
+        m = expect(self.get("/me", params=params), 200)
+        return check_me_view(m, as_of=as_of, known_at=known_at)
+
+    def total_at(self, as_of: str | None = None, known_at: str | None = None) -> int:
+        return self.me_at(as_of, known_at)["total"]
+
+    def money_at(self, as_of: str | None = None, known_at: str | None = None) -> tuple[int, int, int]:
+        m = self.me_at(as_of, known_at)
+        return m["total"], m["available"], m["held"]
+
+    def statement(self, **params) -> httpx.Response:
+        """GET /statement with the given query parameters (None values are dropped)."""
+        return self.get("/statement", params={k: v for k, v in params.items() if v is not None})
+
+    def statement_page(self, snapshot: str, **params) -> httpx.Response:
+        return self.statement(snapshot=snapshot, **params)
+
+    def correct(self, payment_id: str, expected_revision: Any = _UNSET, amount: Any = _UNSET,
+                effective_at: Any = _UNSET, reason: Any = "corrected", *, key: str | None = None,
+                body: Any = _UNSET, **kw) -> httpx.Response:
+        """POST /payments/{id}/corrections. Fields left _UNSET are omitted; `body` overrides them all."""
+        if body is _UNSET:
+            body = {k: v for k, v in (("expected_revision", expected_revision), ("amount", amount),
+                                      ("effective_at", effective_at), ("reason", reason)) if v is not _UNSET}
+        return self.post(f"/payments/{payment_id}/corrections", json=body, key=key or new_key(), **kw)
+
+    def revisions_resp(self, payment_id: str) -> httpx.Response:
+        return self.get(f"/payments/{payment_id}/revisions")
+
+    def revisions(self, payment_id: str) -> list[dict]:
+        """GET /payments/{id}/revisions, checked per PLAN 3.6 and I56."""
+        body = expect(self.revisions_resp(payment_id), 200)
+        assert isinstance(body, dict) and set(body) == {"revisions"}, f"revisions list keys: {body!r}"
+        revs = body["revisions"]
+        assert isinstance(revs, list) and revs, f"every payment has revision 1: {body!r}"
+        for i, r in enumerate(revs, start=1):
+            check_revision(r, payment_id=payment_id, revision=i)
+        assert revs[0]["reason"] == "" and revs[0]["effective_at"] == revs[0]["recorded_at"], \
+            f"I56: revision 1 has reason \"\" and effective_at == recorded_at: {revs[0]}"
+        for a, b in zip(revs, revs[1:]):
+            assert instant(a["recorded_at"]) < instant(b["recorded_at"]), \
+                f"I56: a payment's recorded_at values strictly increase: {a} then {b}"
+        return revs
+
+    def service_now(self, payer_handle: str) -> str:
+        """A time mark issued by the service (W18.5): the created_at of a new request to payer_handle.
+
+        It creates a pending request and moves no money.
+        """
+        return expect(self.ask(payer_handle, 1, note="time mark"), 201)["created_at"]
+
 
 def _all_pages(client: Api, path: str, field: str, params: dict) -> list[dict]:
     out: list[dict] = []
@@ -265,13 +331,22 @@ REQUEST_KEYS = {"request_id", "requester_id", "requester_handle", "payer_id",
 SPLIT_KEYS = {"split_id", "amount", "currency", "note", "shares", "requests", "created_at"}
 SETTLEMENT_KEYS = {"settlement_id", "committed_at", "payments"}
 STATUSES = {"pending", "paid", "declined", "cancelled"}
-AUTHZ_KEYS = {"authorization_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
-              "amount", "captured_amount", "remaining_amount", "currency", "note", "visibility",
-              "status", "expires_at", "payment_id", "payment_ids", "created_at"}
+# PLAN 3.6 (S3): stage 2's authorization fields plus closed_at (I61).
+STAGE2_AUTHZ_KEYS = {"authorization_id", "from_user_id", "from_handle", "to_user_id", "to_handle",
+                     "amount", "captured_amount", "remaining_amount", "currency", "note", "visibility",
+                     "status", "expires_at", "payment_id", "payment_ids", "created_at"}
+AUTHZ_KEYS = STAGE2_AUTHZ_KEYS | {"closed_at"}
 AUTHZ_STATUSES = {"open", "captured", "voided", "expired"}
+# PLAN 3.6 (S3): revisions, statements and their entries.
+REVISION_KEYS = {"payment_id", "revision", "amount", "effective_at", "recorded_at", "reason"}
+STATEMENT_KEYS = {"opening_balance", "entries", "closing_balance", "has_more", "snapshot"}
+ENTRY_KEYS = {"payment", "delta", "balance_after", "revision", "effective_at", "recorded_at"}
 
-# §3.4: RFC 3339 with an explicit numeric offset.
-RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}:\d{2}$")
+# PLAN 3.4 (S3, D66): the instant grammar. Every timestamp the service shows is one of these
+# (a seeded or client-supplied one exactly as written; an issued one in PLAN_TS form).
+RFC3339 = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$")
+_INSTANT = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?"
+                      r"(?:([Zz])|([+-])([0-9]{2}):([0-9]{2}))$")
 # PLAN 3.7 (D14): exactly YYYY-MM-DDTHH:MM:SS.sss+00:00.
 PLAN_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+00:00$")
 HANDLE = re.compile(r"^[a-z0-9_]{1,20}$")
@@ -286,8 +361,94 @@ def check_id(v: Any, what: str = "id") -> None:
 
 
 def ts(v: Any) -> datetime:
-    assert isinstance(v, str) and RFC3339.match(v), f"timestamp is not RFC 3339 with an offset: {v!r}"
-    return datetime.fromisoformat(v)
+    """A timestamp as a datetime (fractions beyond microseconds dropped; use `instant` to compare)."""
+    exact = instant(v)
+    whole = exact.numerator // exact.denominator
+    micro = (exact - whole) * 1_000_000
+    return datetime.fromtimestamp(whole, timezone.utc) + timedelta(microseconds=int(micro))
+
+
+def instant(v: Any) -> Fraction:
+    """PLAN 3.4: the exact instant of a valid string, as seconds since the epoch (never rounded)."""
+    assert isinstance(v, str) and len(v) <= 64, f"an instant is a string of at most 64 characters: {v!r}"
+    m = _INSTANT.match(v)
+    assert m, f"timestamp is not an RFC 3339 instant with an offset (PLAN 3.4): {v!r}"
+    y, mo, d, h, mi, s = (int(g) for g in m.groups()[:6])
+    frac, z, sign, oh, om = m.groups()[6:]
+    datetime(y, mo, d, h, mi, s)   # raises for an impossible date or time
+    secs = calendar.timegm((y, mo, d, h, mi, s, 0, 0, 0))
+    if not z:
+        assert int(oh) <= 23 and int(om) <= 59, f"offset out of range: {v!r}"
+        off = int(oh) * 3600 + int(om) * 60
+        secs -= off if sign == "+" else -off
+    return Fraction(secs) + (Fraction(int(frac), 10 ** len(frac)) if frac else 0)
+
+
+def fmt_instant(value: Fraction | str, *, digits: int = 6, offset: str = "+00:00", t: str = "T") -> str:
+    """The exact instant `value` written with `digits` fraction digits (0: none) at `offset`.
+
+    `offset` is "Z", "z" or "+hh:mm"/"-hh:mm"; `t` the date-time separator. The value must be
+    representable exactly with `digits` digits: nothing is rounded.
+    """
+    if isinstance(value, str):
+        value = instant(value)
+    if offset in ("Z", "z"):
+        off = 0
+    else:
+        sign = 1 if offset[0] == "+" else -1
+        off = sign * (int(offset[1:3]) * 3600 + int(offset[4:6]) * 60)
+    local = value + off
+    whole = local.numerator // local.denominator
+    frac = (local - whole) * 10 ** digits
+    assert frac.denominator == 1, f"{value} is not exact at {digits} fraction digits"
+    base = datetime.fromtimestamp(whole, timezone.utc).strftime(f"%Y-%m-%d{t}%H:%M:%S")
+    return base + (f".{int(frac):0{digits}d}" if digits else "") + offset
+
+
+def shifted(v: str, micros: int = 0, *, seconds: float = 0, **fmt) -> str:
+    """The instant v moved by `micros` microseconds (and `seconds`), in fmt_instant form."""
+    return fmt_instant(instant(v) + Fraction(micros, 1_000_000) + Fraction(seconds), **fmt)
+
+
+EPOCH = "1970-01-01T00:00:00Z"
+FAR_FUTURE = "9999-12-31T23:59:59.999999999Z"
+
+
+def check_revision(r: dict, **want) -> dict:
+    """PLAN 3.6: exactly the revision fields."""
+    assert isinstance(r, dict) and set(r) == REVISION_KEYS, \
+        f"revision keys: {sorted(r) if isinstance(r, dict) else r!r}"
+    check_id(r["payment_id"], "payment_id")
+    assert is_int(r["revision"]) and r["revision"] >= 1, r
+    assert is_int(r["amount"]) and 0 <= r["amount"] <= MAX_AMOUNT, r
+    instant(r["effective_at"])
+    assert PLAN_TS.match(r["recorded_at"]) or r["revision"] == 1, \
+        f"a correction's recorded_at is issued by the service (PLAN 3.4 form): {r}"
+    instant(r["recorded_at"])
+    assert isinstance(r["reason"], str), r
+    if r["revision"] > 1:
+        assert 1 <= len(r["reason"]) <= 200, f"a correction's reason has 1..200 code points: {r}"
+    for k, v in want.items():
+        assert r[k] == v, f"revision {k}: expected {v!r}, got {r[k]!r} in {r}"
+    return r
+
+
+def check_me_view(m: dict, *, as_of: str | None = None, known_at: str | None = None) -> dict:
+    """PLAN 3.6: Me plus `as_of`/`known_at` exactly as sent, only when sent; I60's identities."""
+    want = set(ME_KEYS) | ({"as_of"} if as_of is not None else set()) | \
+        ({"known_at"} if known_at is not None else set())
+    assert set(m) == want, f"GET /me keys with as_of={as_of!r} known_at={known_at!r}: {sorted(m)}"
+    if as_of is not None:
+        assert m["as_of"] == as_of, f"I52: as_of must be echoed exactly: sent {as_of!r}, got {m['as_of']!r}"
+    if known_at is not None:
+        assert m["known_at"] == known_at, \
+            f"I59: known_at must be echoed exactly: sent {known_at!r}, got {m['known_at']!r}"
+    for k in ("balance", "total", "available", "held"):
+        assert is_int(m[k]), f"{k} must be an integer: {m}"
+    assert m["balance"] == m["total"], f"I60: balance must equal total in every view: {m}"
+    assert m["available"] == m["total"] - m["held"], f"I60: available must be total - held in every view: {m}"
+    assert m["held"] >= 0, f"I60: held is never negative: {m}"
+    return m
 
 
 def check_me(m: dict) -> dict:
@@ -334,10 +495,18 @@ def check_payment(p: dict, **want) -> dict:
     return p
 
 
-def check_authorization(a: dict, **want) -> dict:
-    """PLAN 3.6: exactly the authorization fields, with the remainder rules of I33."""
-    assert isinstance(a, dict) and set(a) == AUTHZ_KEYS, \
+def check_authorization(a: dict, *, keys: set = AUTHZ_KEYS, **want) -> dict:
+    """PLAN 3.6: exactly the authorization fields, with the remainder rules of I33 and I61's closed_at.
+
+    `keys=STAGE2_AUTHZ_KEYS` checks a stored stage-2 replay body, which has no closed_at (D54).
+    """
+    assert isinstance(a, dict) and set(a) == keys, \
         f"authorization keys: {sorted(a) if isinstance(a, dict) else a!r}"
+    if "closed_at" in keys:
+        if a["status"] == "open":
+            assert a["closed_at"] is None, f"I61: closed_at is null while open: {a}"
+        else:
+            instant(a["closed_at"])
     check_id(a["authorization_id"], "authorization_id")
     check_id(a["from_user_id"], "from_user_id")
     check_id(a["to_user_id"], "to_user_id")
@@ -360,6 +529,7 @@ def check_authorization(a: dict, **want) -> dict:
     assert a["payment_id"] == (a["payment_ids"][-1] if a["payment_ids"] else None), \
         f"payment_id must be the last of payment_ids: {a}"
     ts(a["created_at"])
+    instant(a["expires_at"])
     for k, v in want.items():
         assert a[k] == v, f"authorization {k}: expected {v!r}, got {a[k]!r} in {a}"
     return a
@@ -391,9 +561,154 @@ def by_id(items: list[dict], field: str) -> dict[str, dict]:
 
 
 def assert_newest_first(items: list[dict], field: str = "created_at") -> None:
-    times = [ts(i[field]) for i in items]
+    """I29 (amended): newest first, compared as exact instants."""
+    times = [instant(i[field]) for i in items]
     assert times == sorted(times, reverse=True), \
         f"list is not newest first by {field}: {[i[field] for i in items]}"
+
+
+# ---------------------------------------------------------------- statements (stage 3)
+
+def check_entry(e: dict, user_id: str) -> dict:
+    """PLAN 3.6 and I54 on one statement entry of `user_id`'s statement."""
+    assert isinstance(e, dict) and set(e) == ENTRY_KEYS, \
+        f"entry keys: {sorted(e) if isinstance(e, dict) else e!r}"
+    p = check_payment(e["payment"])
+    for k in ("delta", "balance_after", "revision"):
+        assert is_int(e[k]), f"entry {k} must be an integer: {e}"
+    assert e["revision"] >= 1, e
+    instant(e["effective_at"])
+    instant(e["recorded_at"])
+    if p["from_user_id"] == user_id:
+        assert e["delta"] == -p["amount"], f"I54: a sent payment's delta is minus its selected amount: {e}"
+    elif p["to_user_id"] == user_id:
+        assert e["delta"] == p["amount"], f"I54: a received payment's delta is its selected amount: {e}"
+    else:
+        raise AssertionError(f"I54: a statement holds only the caller's payments: {e}")
+    if e["revision"] == 1:
+        assert e["effective_at"] == e["recorded_at"] == p["created_at"], \
+            f"I56: revision 1 takes effect and is recorded at the payment's created_at: {e}"
+    return e
+
+
+def check_statement_page(body: Any, user_id: str, *, known_at: str | None = None,
+                         snapshot: str | None = None) -> dict:
+    """PLAN 3.6: the statement fields (`known_at` only when the first read sent it)."""
+    want = STATEMENT_KEYS | ({"known_at"} if known_at is not None else set())
+    assert isinstance(body, dict) and set(body) == want, \
+        f"statement keys (known_at={known_at!r}): {sorted(body) if isinstance(body, dict) else body!r}"
+    if known_at is not None:
+        assert body["known_at"] == known_at, f"I59: known_at echoed exactly: sent {known_at!r}, got {body['known_at']!r}"
+    assert is_int(body["opening_balance"]) and is_int(body["closing_balance"]), body
+    assert type(body["has_more"]) is bool, body
+    assert isinstance(body["snapshot"], str) and body["snapshot"], f"a statement carries a snapshot token: {body}"
+    if snapshot is not None:
+        assert body["snapshot"] == snapshot, \
+            f"D72: a snapshot page carries the first page's fields, its token included: {body['snapshot']!r}"
+    assert isinstance(body["entries"], list), body
+    for e in body["entries"]:
+        check_entry(e, user_id)
+    return body
+
+
+def check_window(entries: list[dict], opening: int, closing: int, *, frm: str | None = None,
+                 to: str | None = None) -> None:
+    """I54 over a full window: running balances, the identity, order and the half-open bounds."""
+    running = opening
+    for i, e in enumerate(entries):
+        running += e["delta"]
+        assert e["balance_after"] == running, \
+            f"I54: entry {i} balance_after {e['balance_after']} != running {running}: {e}"
+    assert closing == running, f"I54: opening {opening} + deltas {running - opening} != closing {closing}"
+    keys = [(instant(e["effective_at"]), e["payment"]["payment_id"]) for e in entries]
+    assert keys == sorted(keys) and len(set(keys)) == len(keys), \
+        f"I54: entries are ordered by effective_at, then payment_id: {[(e['effective_at'], e['payment']['payment_id']) for e in entries]}"
+    assert len({e["payment"]["payment_id"] for e in entries}) == len(entries), "a payment appears at most once"
+    for e in entries:
+        if frm is not None:
+            assert instant(e["effective_at"]) >= instant(frm), f"I54: an entry before from={frm}: {e}"
+        if to is not None:
+            assert instant(e["effective_at"]) < instant(to), f"I54: an entry at or after to={to}: {e}"
+
+
+@dataclass
+class Statement:
+    first: dict             # the first page, as returned
+    entries: list[dict]     # the full window, read through the snapshot
+    opening: int
+    closing: int
+    snapshot: str
+
+    def deltas(self) -> list[int]:
+        return [e["delta"] for e in self.entries]
+
+    def ids(self) -> list[str]:
+        return [e["payment"]["payment_id"] for e in self.entries]
+
+
+def page_snapshot(c: "Api", user_id: str, token: str, *, known_at: str | None = None,
+                  page_limit: int = 200) -> tuple[list[dict], int, int]:
+    """Every entry of a snapshot, page by page; every page shows the same window balances (I54)."""
+    entries: list[dict] = []
+    balances = None
+    offset = 0
+    while True:
+        page = expect(c.statement_page(token, limit=page_limit, offset=offset), 200)
+        check_statement_page(page, user_id, known_at=known_at, snapshot=token)
+        pair = (page["opening_balance"], page["closing_balance"])
+        assert balances in (None, pair), f"I54: paging changed the window balances: {balances} then {pair}"
+        balances = pair
+        entries.extend(page["entries"])
+        if not page["has_more"]:
+            return entries, pair[0], pair[1]
+        assert len(page["entries"]) == page_limit, f"has_more with a short page: {page}"
+        offset += page_limit
+
+
+def read_statement(c: "Api", user_id: str, **params) -> Statement:
+    """A first GET /statement plus every page of its snapshot, checked against I54 and I55."""
+    first = expect(c.statement(**params), 200)
+    known_at = params.get("known_at")
+    check_statement_page(first, user_id, known_at=known_at)
+    entries, opening, closing = page_snapshot(c, user_id, first["snapshot"], known_at=known_at)
+    assert (first["opening_balance"], first["closing_balance"]) == (opening, closing), \
+        "I55: the snapshot pages the first result's balances"
+    lim = int(params.get("limit", 50))
+    off = int(params.get("offset", 0))
+    assert first["entries"] == entries[off:off + lim], "I55: the first page is a slice of its snapshot"
+    assert first["has_more"] == (len(entries) > off + lim), \
+        f"I54: has_more is exact: {first['has_more']} with {len(entries)} entries, offset {off}, limit {lim}"
+    check_window(entries, opening, closing, frm=params.get("from"), to=params.get("to"))
+    return Statement(first, entries, opening, closing, first["snapshot"])
+
+
+def history_is_consistent(fx: dict) -> bool:
+    """Whether a fixture's seeded history keeps every wallet at or above 0 at every instant (I2, D69).
+
+    The seeded payments are replayed from the opening balances in time order, the ones without
+    `created_at` (the reset's time) last; seeded open holds with their own `created_at` are not
+    modelled, so such a fixture counts as unknown (False).
+    """
+    if any(a.get("created_at") is not None and a.get("status", "open") == "open"
+           for a in fx.get("authorizations") or []):
+        return False
+    bal = {u["id"]: u["balance"] for u in fx["users"]}
+    pays = fx.get("payments") or []
+    for p in pays:
+        bal[p["from_user_id"]] += p["amount"]
+        bal[p["to_user_id"]] -= p["amount"]
+    if min(bal.values(), default=0) < 0:
+        return False
+    timed = sorted({instant(p["created_at"]) for p in pays if p.get("created_at") is not None})
+    for t in timed + [None]:
+        for p in pays:
+            at = instant(p["created_at"]) if p.get("created_at") is not None else None
+            if at == t:
+                bal[p["from_user_id"]] -= p["amount"]
+                bal[p["to_user_id"]] += p["amount"]
+        if min(bal.values(), default=0) < 0:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------- fixtures
@@ -477,15 +792,20 @@ class Snapshot:
     text: str
     total: int | None
     accounts: dict[str, Account]
+    consistent: bool = False   # the source's seeded history was consistent (history_is_consistent)
 
 
 class Service:
     """One running service, plus what the suite expects its state to be."""
 
+    history_checks = False   # set by conftest: --upto 14 or later
+    statement_checks = False # set by conftest: --upto 15 or later (GET /statement exists)
+
     def __init__(self, base_url: str, name: str = "A"):
         self.base_url = base_url.rstrip("/")
         self.name = name
         self.total: int | None = None
+        self.consistent = False
         self.accounts: dict[str, Account] = {}
         self._clients: list[Api] = []
         self._by_handle: dict[str, Api] = {}
@@ -531,6 +851,7 @@ class Service:
             self.accounts = {u["handle"]: Account(u["handle"], u["email"], u["password"], u["id"])
                              for u in fx["users"]}
             self.total = sum(u["balance"] for u in fx["users"]) if track else None
+            self.consistent = history_is_consistent(fx)
         return resp
 
     def must_reset(self, fx: dict, **kw) -> None:
@@ -549,13 +870,16 @@ class Service:
     def export(self) -> Snapshot:
         resp = httpx.get(f"{self.base_url}/_test/export", timeout=RESET_TIMEOUT)
         body = expect(resp, 200)
-        return Snapshot(body, resp.text, self.total, copy.deepcopy(self.accounts))
+        return Snapshot(body, resp.text, self.total, copy.deepcopy(self.accounts), self.consistent)
 
     def import_raw(self, body: Any = _UNSET, *, content: bytes | None = None) -> httpx.Response:
         if content is None:
             content = _json.dumps(body, ensure_ascii=False).encode("utf-8")
-        return httpx.post(f"{self.base_url}/_test/import", content=content,
+        resp = httpx.post(f"{self.base_url}/_test/import", content=content,
                           headers={"Content-Type": "application/json"}, timeout=RESET_TIMEOUT)
+        if resp.status_code == 204:
+            self.consistent = False   # unknown until import_ says otherwise
+        return resp
 
     def import_(self, snap: Snapshot) -> httpx.Response:
         resp = self.import_raw(snap.body)
@@ -563,6 +887,7 @@ class Service:
             self._by_handle.clear()
             self.accounts = copy.deepcopy(snap.accounts)
             self.total = snap.total
+            self.consistent = snap.consistent
         return resp
 
     # -- invariants
@@ -603,6 +928,50 @@ class Service:
         if holds:
             for h in self.accounts:
                 self.held_matches_open_holds(h, where)
+
+    def history_instants(self) -> list[str]:
+        """Every instant at which a tracked account's payments take effect or its holds change."""
+        seen: dict[Fraction, str] = {}
+        for h in self.accounts:
+            c = self.client(h)
+            acct = self.accounts[h]
+            if self.statement_checks:      # effective times under the latest revisions
+                first = expect(c.statement(limit=200), 200)
+                entries, _, _ = page_snapshot(c, acct.user_id, first["snapshot"])
+                for e in entries:
+                    seen.setdefault(instant(e["effective_at"]), e["effective_at"])
+            else:                          # before W15 (and W16) every payment takes effect at created_at
+                for p in c.feed():
+                    if h in (p["from_handle"], p["to_handle"]):
+                        seen.setdefault(instant(p["created_at"]), p["created_at"])
+            for a in c.auths(direction="outgoing"):
+                for k in ("created_at", "closed_at", "expires_at"):
+                    if a.get(k):
+                        seen.setdefault(instant(a[k]), a[k])
+        return [seen[k] for k in sorted(seen)]
+
+    def assert_history_invariants(self, where: str = "") -> None:
+        """Stage 3: I1 in historical views; I2 and I60 at every history instant (sampled) when the
+        seeded history is consistent (I2 amended, I58)."""
+        if not self.history_checks or self.total is None or len(self.accounts) > MAX_TRACKED_FOR_HISTORY:
+            return
+        views = [(EPOCH, None), (None, EPOCH), (FAR_FUTURE, None), (FAR_FUTURE, EPOCH)]
+        points = self.history_instants()
+        if len(points) > HISTORY_SAMPLE:
+            step = (len(points) - 1) / (HISTORY_SAMPLE - 1)
+            points = [points[round(i * step)] for i in range(HISTORY_SAMPLE)]
+        views += [(t, None) for t in points]
+        views += [(None, t) for t in points[:: max(1, len(points) // 3)]]
+        for as_of, known_at in views:
+            mes = {h: self.client(h).me_at(as_of, known_at) for h in self.accounts}
+            totals = {h: m["total"] for h, m in mes.items()}
+            assert sum(totals.values()) == self.total, \
+                f"I1 violated{where} on {self.name} at as_of={as_of} known_at={known_at}: " \
+                f"sum {sum(totals.values())} != {self.total}; {totals}"
+            if self.consistent and known_at is None:
+                for h, m in mes.items():
+                    assert m["total"] >= 0 and m["available"] >= 0, \
+                        f"I2/I58 violated{where} on {self.name}: {h} at as_of={as_of}: {m}"
 
     def burst(self, fn: Callable[[int], Any], n: int, *, watch: bool = True,
               timeout: float = 60.0) -> list:
