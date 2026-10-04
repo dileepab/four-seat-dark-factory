@@ -352,7 +352,107 @@ Specification: all of stage 1. Invariants: all.
 
 ## 6. Specification trace
 
-Filled in once W6 is committed: each normative line of stage-1.md, the test that exercises it, and any gap turned into a criterion.
+Each normative line of stage-1.md, condensed, with the acceptance tests that exercise it (file prefix `test_` and test prefix `test_` omitted). Rows without tests wait for the W2 to W5 parts of the suite; a row still empty when its item's tests land is a gap and becomes a criterion at once.
+
+| N | Spec | Normative line (condensed) | Plan | Tests | Status |
+|---|---|---|---|---|---|
+| N1 | §1 | Sum of balances always equals total seeded by last reset | I1 | | |
+| N2 | §1 | No balance negative, including transiently | I2 | | |
+| N3 | §1 | A payment request moves money at most once | I3 | | |
+| N4 | §1 | Amounts are exact integer minor units | I9 | | |
+| N5 | §1 | Money moves only between existing wallets | I8 | | |
+| N6 | §2 | Dockerfile + RUN.md command builds and starts with no manual setup | W1.1 W1.2 | w1_container: stage_folder_has_dockerfile_and_run_md_and_no_git, run_md_gives_build_run_and_test_commands | covered by 16f24a6 |
+| N7 | §2 | Image runs alone with -e PORT and a port mapping; no runtime outbound network; deps and seed inside | W1.1 | w1_container: offline_image_serves_health_with_no_network_on_default_port, port_env_is_honoured_and_health_is_fast | covered by 16f24a6 |
+| N8 | §2 | 2 vCPU, 2 GiB, healthy within 60 s, 50 in flight, 5 s per request (10 s reset) | I11 W1.9 W2.4 | w1_container: service_works_within_the_resource_limits; w1_auth: fifty_concurrent_logins; w1_reset: a_thousand_users_with_distinct_passwords_reset_within_ten_seconds (money paths under load: W2) | covered by 16f24a6 |
+| N9 | §2 | Runtime assets inside the image | W1.1 | w1_container: offline_image_serves_health_with_no_network_on_default_port | covered by 16f24a6 |
+| N10 | §3.1 | Listen on 0.0.0.0:PORT, default 8080 | W1.1 | w1_container: default_port_is_8080, port_env_is_honoured_and_health_is_fast | covered by 16f24a6 |
+| N11 | §3.2 | GET /health 200 {"status":"ok"} once ready, within 60 s | W1.1 | w1_transport: health_is_200_status_ok; w1_container: port_env_is_honoured_and_health_is_fast | covered by 16f24a6 |
+| N12 | §3.3 | Reset replaces all state, 204, next requests see only the fixture, repeatable, unauthenticated | I25 W1.4 | w1_reset: reset_returns_204_with_no_body_and_seeds_users, reset_replaces_everything, repeated_resets_work, reset_ignores_an_invalid_authorization_header | covered by 16f24a6 |
+| N13 | §3.4 | JSON utf-8 requests and responses | W1.3 | support: content-type asserted on every JSON response; w1_transport: request_content_type_is_not_checked | covered by 16f24a6 |
+| N14 | §3.4 | Timestamps RFC 3339 with explicit offset | I29 | w1_reset: plan_timestamp_form (item 2) | covered by 16f24a6 |
+| N15 | §3.4 | Unknown body fields ignored | W1.3 | w1_auth: signup_ignores_a_handle_and_a_balance_in_the_body; w1_reset: valid_fixture_edges[unknown fields everywhere] | covered by 16f24a6 |
+| N16 | §3.4 | Unknown query parameters ignored | W1.3 W2.5 | w1_transport: unknown_query_parameters_are_ignored | covered by 16f24a6 |
+| N17 | §3.4 | Ids opaque, at most 64 characters | I28 | support: every id checked as 1..64 chars; w1_reset: invalid_fixture[user id 65 chars], valid_fixture_edges[user id of 64 chars] | covered by 16f24a6 |
+| N18 | §4 | One currency from the fixture; /me reports currency and minor_units | W1.7 | w1_reset: currency_and_minor_units_come_from_the_fixture; w1_auth: new_user_in_a_jpy_service_holds_zero_yen | covered by 16f24a6 |
+| N19 | §4 | 1000, 1000.0, 1e3 valid and equal; booleans and strings are not numbers | §3.4 W2.2 | | |
+| N20 | §4 | Handle unique, ^[a-z0-9_]{1,20}$, never changes | I14 | w1_reset: invalid_fixture[duplicate handle, handle upper case, handle with dash, handle 21 chars, handle empty]; w1_auth: signup_ignores_a_handle_and_a_balance_in_the_body | covered by 16f24a6 |
+| N21 | §4 | Seeded users take the fixture handle | W1.4 | w1_auth: me_for_every_seeded_user | covered by 16f24a6 |
+| N22 | §4 | Signup derives handle (lowercase, non [a-z0-9_] to _, 20 chars); taken fails | W1.5 | w1_auth: handle_is_derived_from_the_local_part, taken_derived_handle_is_409_and_creates_no_account, truncation_collision_is_handle_taken | covered by 16f24a6 |
+| N23 | §4 | New users start at 0, can receive and be asked immediately | W1.7 | w1_auth: new_user_me_has_derived_handle_zero_balance_and_service_currency (receiving: W2; being asked: W3) | covered by 16f24a6 |
+| N24 | §4 | Payment moves money immediately and atomically, direct or by paying a request | I8 | | |
+| N25 | §4 | Request lifecycle; only payer pays/declines; only requester cancels | I4 | | |
+| N26 | §4 | Request may exceed payer balance; pay while short is 409 and changes nothing; payable later | W3.1 W3.2 | | |
+| N27 | §4 | Visibility belongs to the payment, chosen by the payer; requests have none and never appear in feeds | I5 I7 | | |
+| N28 | §4 | Feed iff public or caller is sender/receiver; no other rule | I5 | | |
+| N29 | §4 | Requests never in feed; GET /requests only the caller's | I5 I6 | | |
+| N30 | §4 | Split not a feed item; its requests visible to their parties; fulfilling payments follow the feed rule | I5 W3.7 | | |
+| N31 | §4 | Visibility one value seen identically; private hidden from third parties only | I7 | | |
+| N32 | §4 | amount at most 1e9; balances within 2^53; exact arithmetic | I9 | | |
+| N33 | §4 | Fixture format: currency, minor_units, users, payments, requests | W1.4 | w1_reset: reset_returns_204_with_no_body_and_seeds_users, valid_fixture_edges | covered by 16f24a6 |
+| N34 | §4 | Seeded users log in immediately | W1.5 | w1_reset: seeded_users_log_in_immediately, one_character_seeded_password_logs_in | covered by 16f24a6 |
+| N35 | §4 | Seeded balance is after seeded payments; no replay | W1.4 | w1_reset: seeded_payments_follow_the_feed_rule_and_representation (item 2) | covered by 16f24a6 |
+| N36 | §4 | Negative fixture balance: 422, nothing changes | I25 W1.4 | w1_reset: invalid_fixture_is_422_and_changes_nothing[negative balance (spec)] | covered by 16f24a6 |
+| N37 | §4 | minor_units 0, 2 or 3 (EUR, JPY, BHD) | W1.4 | w1_reset: invalid_fixture[minor_units 1, 4, string, fraction, missing], currency_and_minor_units_come_from_the_fixture | covered by 16f24a6 |
+| N38 | §5 | Every 4xx/5xx carries the envelope | I10 | support: envelope asserted by every expect_error | covered by 16f24a6 |
+| N39 | §5 | Error table codes and statuses | §3.3 | | |
+| N40 | §5 | Correct type, bad format or range: 422 | §3.4 | | |
+| N41 | §5 | amount/note/visibility type errors 422; omission gives defaults; other wrong types 400 | §3.4 | | |
+| N42 | §5 | Integer query params plain digits; 1e9, 4.0, +4 are 422 | §3.7 | | |
+| N43 | §5 | Key 1..255, limit 1..200, offset >= 0 on every endpoint taking them | §3.5 §3.7 | | |
+| N44 | §5 | No 5xx, including under concurrent load | I11 | w1_transport: signup_never_5xx_on_weird_values, five_mib_body_is_answered_not_dropped, garbage_request_line_gets_400_envelope (under load: W2) | covered by 16f24a6 |
+| N45 | §6 | Signup 201 {user_id, display_name, token} | W1.5 | w1_auth: signup_returns_201_with_exactly_user_id_display_name_token | covered by 16f24a6 |
+| N46 | §6 | Login 200 {user_id, display_name, token} | W1.5 | w1_auth: login_returns_200_with_user_id_display_name_token, login_after_signup_returns_the_same_user | covered by 16f24a6 |
+| N47 | §6 | email_taken 409; password < 8 422; email form 422; login 401; handle_taken 409 creates nothing | W1.5 | w1_auth: registered_email_is_email_taken_case_insensitively, password_length_in_code_points, email_must_be_local_at_domain, wrong_password_or_unknown_email_is_401, taken_derived_handle_is_409_and_creates_no_account | covered by 16f24a6 |
+| N48 | §6 | Bearer token on every endpoint except health, reset, signup, login (and export/import) | W1.6 | w1_auth: bad_or_missing_bearer_is_401 (every endpoint), signup_/login_ignores_an_invalid_authorization_header; w1_transport: health_ignores_an_invalid_authorization_header; w1_reset: reset_ignores_an_invalid_authorization_header | covered by 16f24a6 |
+| N49 | §6 | Tokens never expire; many tokens and sessions per account | I13 | w1_auth: every_issued_token_stays_valid, tokens_are_long_random_base64url | covered by 16f24a6 |
+| N50 | §6 | Password hashing; no plaintext | I12 | | |
+| N51 | §7 | Five write paths require Idempotency-Key | W2.3 W3.2 W3.6 W4.5 | | |
+| N52 | §7 | Key scoped to the user | I19 | | |
+| N53 | §7 | Replay = same user, method, path, body; other path is a first use | I19 | | |
+| N54 | §7 | Table: 400 missing, 201 first, 200 replay identical, 409 reuse, 4xx reuse is first use | I15 I16 I18 | | |
+| N55 | §7 | Same body = same JSON value after parsing | §3.9 | | |
+| N56 | §7 | Concurrent identical first use: one 201, others 200, effect once | I17 | | |
+| N57 | §7 | Replay returns original after resource changes; no further state change | I15 | | |
+| N58 | §7 | Claimed key resolved before validation and resource checks | I16 | | |
+| N59 | §8 | GET /me shape | W1.7 | w1_auth: me_for_every_seeded_user, new_user_me_has_derived_handle_zero_balance_and_service_currency | covered by 16f24a6 |
+| N60 | §8 | POST /payments body, defaults, 201 shape | W2.1 | | |
+| N61 | §8 | POST /payments error table | W2.2 | | |
+| N62 | §8 | Debit and credit atomic; failed payment leaves no trace | I8 | | |
+| N63 | §8 | note verbatim, Unicode byte for byte | I20 | | |
+| N64 | §8 | POST /requests 201 shape; caller is requester | W3.1 | | |
+| N65 | §8 | POST /requests error table | W3.1 | | |
+| N66 | §8 | Payer balance not checked at request creation | W3.1 | | |
+| N67 | §8 | Pay: payer only; optional visibility default public; replay needs identical body | W3.2 | | |
+| N68 | §8 | Pay 201 payment with request_id; request paid with payment_id | W3.2 | | |
+| N69 | §8 | Pay error table | W3.2 | | |
+| N70 | §8 | Pay replay 200 original, even when paid; no extra money; never 409 | I15 W3.2 | | |
+| N71 | §8 | Decline rules | W3.4 | | |
+| N72 | §8 | Cancel rules | W3.4 | | |
+| N73 | §8 | GET /requests filters, order, paging, 422s, has_more | W3.5 | | |
+| N74 | §8 | Splits: one pending request per non-caller participant; caller optional; §9 shares in order | W3.6 | | |
+| N75 | §8 | Split response: shares (all, in order, sum) and requests (non-callers, in order) | W3.6 | | |
+| N76 | §8 | Split error table | W3.6 | | |
+| N77 | §8 | Caller-only split valid with requests []; no balance checks | W3.6 | | |
+| N78 | §8 | GET /activity: feed rule, newest first, paging as /requests | W2.5 | | |
+| N79 | §9 | Shares whole, sum, differ by 1, larger first; table rows | I21 | | |
+| N80 | §9 | Order moves the extra unit; zero share legal and gets a request | W3.6 | | |
+| N81 | §9 | Splits independent; balances sum to seeded total after splits paid | I1 W3.6 | | |
+| N82 | §10 | Export and import unauthenticated | W5.1 | | |
+| N83 | §10 | Export 200 {track, format_version 1, state} accepted unchanged by import | W5.1 | | |
+| N84 | §10 | Import atomic, 204, no dependency on source process/files/port/network | W5.2 | | |
+| N85 | §10 | Import replaces, never merges; repeat gives no duplicates | W5.2 | | |
+| N86 | §10 | Invalid JSON 400; missing fields, wrong track/version, invalid state 422, destination unchanged | W5.3 | | |
+| N87 | §10 | Export is an atomic read-only snapshot | I26 W5.1 | | |
+| N88 | §10 | Preserve accounts, hashed logins, tokens, currency, balances, payments, requests, permissions, idempotency bodies and responses | I26 W5.2 | | |
+| N89 | §10 | No regenerated ids/timestamps, no replay; failed keys reusable; receipts, tokens, retries valid | W5.2 W5.4 | | |
+| N90 | §10 | Import removes earlier data and credentials; reset clears imported state | W5.2 | | |
+| N91 | §11 | settlement_operator_ids default []; operators settle any wallets; no extra read access | W4.1 I24 | | |
+| N92 | §11 | Settlements need operator and key; 401 without token; 403 non-operator | W4.1 | | |
+| N93 | §11 | transfers 1..32, payment field rules, 404, self_payment, 422 shape, input-order precedence before funds | W4.2 | | |
+| N94 | §11 | Net affordability; 409; all or none; failure claims no key and creates nothing | I22 W4.3 | | |
+| N95 | §11 | 201 {settlement_id, committed_at, payments in order}; membership fields | I23 W4.4 | | |
+| N96 | §11 | Members follow feed visibility; response holds every receipt; replay 200 original | W4.4 W4.5 | | |
+| N97 | §11 | Reset/import preserve operator permissions, payments, requests, membership, retry responses | W5.2 | | |
 
 ## 7. Handoff log
 
