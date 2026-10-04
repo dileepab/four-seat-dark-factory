@@ -288,3 +288,24 @@ On f4c2f9e, the clean run of `test_w20_batches.py`, `test_w20_concurrency.py` an
   - RF46 makes the same change for refunds. It passed `test_w19_refunds.py` and `test_w19_concurrency.py` in 3 of 3 runs on 2f9c559 under load (`rerun_logs_s4_2f9c559/RF46r1-3.txt`).
   - That builder test kills RF46 in 6 of 6 runs for its reason (`log_builder_rf46.txt`), so the W19 count stands.
   - An acceptance burst for refunds would be cheap in the same commit, but W19 does not need it.
+
+## W20 @ 9948ff9, suite da8d92b: APPROVED
+
+- Commit: `9948ff97e99919ead98df10aa76b68dc956d8959`, the same commit as the BLOCKED entry above. No product code changed.
+- Suite: `da8d92b92fbb5141895e10e722f942246dd893ca` (W22.8). It changes tests only: `test_w20_concurrency.py` and `test_w19_concurrency.py`. Its parent, 8dac300, changes only `test_w17_export.py`.
+- Verifier: PASS at 9948ff9 on suite 2f9c559. It carries over to da8d92b, because the touched files pass on 9948ff9 ("10 passed").
+- Reason: BR06, the one survivor, now fails a test for its reason in every run. The other results carry over (PROTOCOL: a tests-only commit, the critic reruns its survivors).
+
+### What I reran
+
+- The clean run on 9948ff9, with `test_w20_batches.py`, `test_w20_concurrency.py` and `test_w2_idempotency.py` at `--upto 20`, `-m "not container"`: "294 passed" (`rerun_logs_s4_da8d92b/`).
+- BR06 (`batches.ts:115`, `issue(st, now)` replaced by `now.ts`) failed in 6 of 6 runs, while two W21 mutation runs, a builder-test run and the verifier's container run shared the machine.
+  - Once on the three files: "3 failed, 291 passed".
+  - Five times on `test_w20_concurrency.py`: 1 or 2 failed each time.
+  - Every run fails `test_twenty_batches_at_once_each_get_their_own_recorded_at`: "batches share a recorded_at". Only 7 to 10 of the 20 `recorded_at` values were distinct, so the test has a wide margin.
+- RF46 (the refund's `created_at` not issued) failed `test_twenty_refunds_at_once_each_get_their_own_created_at` in 3 of 3 runs on 2b3944a at `--upto 19`: "refunds share a created_at", with 6 or 7 of 20 distinct. The clean run gave "4 passed". So the acceptance suite now also kills it, as well as the builder test.
+
+### Result
+
+- 51 mutants. Each one fails at least one acceptance test for its reason, and BR06's kill no longer depends on timing.
+- W20 at 9948ff9 is APPROVED on suite da8d92b.
