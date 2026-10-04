@@ -150,3 +150,23 @@ Each mutant is one change, run in a scratch copy. Each one was run against the b
 - The 1000-user reset uses 6.1 s of its 10 s budget under `--cpus 2` (builder's measurement). D22 offers N=2^11 if more headroom is wanted.
 - A signup whose hash straddles a reset is added to the new state: uniqueness is re-checked against the live state, and the signup is not abandoned. This is correct for sequential use.
 - Unknown-email logins skip scrypt and answer faster. The spec does not require equal timing.
+
+## W1: APPROVED @ 2ffcbe83b154b575be5ac6a3faf6622716d74b34 (re-review)
+## W2: APPROVED @ 2ffcbe83b154b575be5ac6a3faf6622716d74b34 (re-review)
+
+The verifier posted PASS for W1 and W2 on 2ffcbe8 with suite ee19494 (room message 1303a2dd): `run.sh --upto 2 --stage-dir wt-2ffcbe8/stage-1` gave 599 passed. The suite changes from c989868 to ee19494 are tests only. The product commit is therefore unchanged and the earlier results carry over (PROTOCOL, "When the verdict commit moves").
+
+I reran my W1 survivors against suite ee19494 (`mutate_acc.py`, `--upto 2`, local server, `-m "not container"`):
+
+| ID | Result |
+|---|---|
+| M49 | killed: test_w1_reset.py::test_reset_to_the_same_fixture_invalidates_every_earlier_token ("expected 401 unauthenticated, got 200", the mutated reason) |
+| M09 | killed: test_w1_transport.py::test_body_of_exactly_one_mib_is_accepted |
+| M20 | killed: test_w1_transport.py::test_unparseable_signup_body_is_400[unpaired surrogate in a key] ("expected 400 malformed_request, got 201") |
+| M56 | killed: test_w1_auth.py::test_email_must_be_local_at_domain[bell\x07@example.com] |
+
+Correction: my BLOCK message showed only M49's added line. The mutant in `mutants_w1_2ffcbe8.json` also adds `store` to fixture.ts's import from state.ts. The verifier re-created the mutant with that import.
+
+Still open, and not blocking:
+- M05 remains a residual (see above).
+- M16 (one shared salt) moves to the W5 review, where the export must kill it.
