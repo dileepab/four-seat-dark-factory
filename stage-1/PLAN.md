@@ -10,7 +10,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 |---|---|---|---|---|
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
-| W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d, suite 026f116); awaiting critic | 2455a8d |
+| W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d); BLOCKED by critic (missing test, R29: 2^53 guard on pay) | 2455a8d |
 | W4 | builder | Settlements | VERIFIED (PASS @ e143cf1, suite 026f116); awaiting critic | e143cf1 |
 | W5 | builder | Export and import | VERIFIED (PASS @ 295378c, suite 026f116); awaiting critic | 295378c |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
@@ -275,7 +275,7 @@ Specification: §1, §4 (payments, feed, arithmetic), §5, §7, §8 `POST /payme
 Specification: §4 (requests), §8 request endpoints and `POST /splits`, §9. Invariants: I1, I3, I4, I6, I15, I21, I27.
 
 - W3.1 `POST /requests`: representation; a request above the payer's balance is 201 `pending`; 422, 404 and `self_request` with section 3.5 precedence.
-- W3.2 Pay: representation; the request becomes `paid` with `payment_id`; visibility from the body, default public; errors in the order 422, 404, 403, 409 `request_not_pending`, 409 `insufficient_funds`; replaying a successful pay returns 200 with the original, never 409; `{}` and `{"visibility": "public"}` are different bodies; a key refused for funds is reusable after funding and pays once; seeded requests are payable and seeded non-pending ones are 409.
+- W3.2 Pay: representation; the request becomes `paid` with `payment_id`; visibility from the body, default public; errors in the order 422, 404, 403, 409 `request_not_pending`, 409 `insufficient_funds`; replaying a successful pay returns 200 with the original, never 409; `{}` and `{"visibility": "public"}` are different bodies; a key refused for funds is reusable after funding and pays once; seeded requests are payable and seeded non-pending ones are 409. Paying a request that would push the requester past 2^53 is 422 `validation_failed` with nothing changed (request still pending, key unclaimed), and paying one that lands exactly on 2^53 is 201 (critic R29).
 - W3.3 At most once: 20 concurrent pays of one request with distinct keys give one 201 and 409 `request_not_pending` for the rest; concurrent pay and decline, and pay and cancel, have exactly one winner; money moves at most once.
 - W3.4 Decline and cancel: transitions; repeating the same action is 200; other terminal states are 409; the wrong party, including a non-party, is 403; unknown is 404; no key needed.
 - W3.5 `GET /requests`: a non-party sees nothing under any filter; filters work alone and together; invalid `direction`, `status`, `limit`, `offset` are 422; newest first; paging and `has_more`.
@@ -464,7 +464,7 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) and verdict scope (section 0) | builder, verifier, critic | 06:53Z | — | sent |
 | HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | verified and approved at 2ffcbe8 instead (1bd9c8d lacks D34/D35) | ACCEPTED |
 | HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (M49), verifier test ee19494, critic APPROVED W1+W2 (REVIEW.md 493fc0c); verifier PASS W1+W2 07:03Z | ACCEPTED |
-| HANDOFF W3 @ 2455a8d (builder) | verifier, critic | 07:29Z | verifier PASS 07:33Z | awaiting critic |
+| HANDOFF W3 @ 2455a8d (builder) | verifier, critic | 07:29Z | verifier PASS 07:33Z; critic BLOCKED 07:56Z (R29, test owed by verifier) | blocked |
 | HANDOFF W4 @ e143cf1 (builder) | verifier, critic | 07:34Z | verifier PASS 07:41Z | awaiting critic |
 | HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | verifier PASS 07:54Z; final check (isolated, main repo @ 720e1c5) claimed stage 1 | awaiting critic |
 | Liveness resend to critic: W3, W4, W5 reviews (no acknowledgement for 20 min) | critic | 07:50Z | critic 07:53Z: all three started; W3 and W4 each have a finding | acknowledged |
