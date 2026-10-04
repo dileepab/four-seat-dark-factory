@@ -8,8 +8,8 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | VERIFIED (PASS @ 2ffcbe8, suite c989868); awaiting critic | 2ffcbe8 |
-| W2 | builder | Idempotency engine, payments, activity feed | VERIFIED (PASS @ 2ffcbe8, suite c989868); awaiting critic | 2ffcbe8 |
+| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | VERIFIED (PASS @ 2ffcbe8); BLOCKED by critic (missing test, M49) | 2ffcbe8 |
+| W2 | builder | Idempotency engine, payments, activity feed | VERIFIED (PASS @ 2ffcbe8); BLOCKED by critic (covers W1, M49) | 2ffcbe8 |
 | W3 | builder | Requests and splits | BUILDING | — |
 | W4 | builder | Settlements | PLANNED | — |
 | W5 | builder | Export and import | PLANNED | — |
@@ -253,7 +253,7 @@ Specification: §2, §3, §4 (users, handles, fixture), §5, §6, §8 `GET /me`.
 - W1.1 `docker build --network=none stage-1` succeeds once the base image is present; `docker run -e PORT=9123` serves on 9123 and without `PORT` on 8080; `GET /health` is 200 `{"status": "ok"}` within 60 s (expected under 5 s); the container works with `--network=none`.
 - W1.2 `RUN.md` gives exact commands to build, run, run the builder tests and run the acceptance suite, with no manual setup.
 - W1.3 Every rule of sections 3.2 and 3.3, each with the envelope; unknown route is 404; a path that does not percent-decode is 404; an idle keep-alive connection reused after 6 s still gets its response.
-- W1.4 Reset per section 3.11: each failing rule gives 422 and leaves the previous state intact (old logins still work); a valid fixture gives 204 and only that fixture is visible; repeated resets work; the 1000-user fixture answers within 10 s; a fixture payment with `settlement_id` shows it in the feed, one without shows `null`.
+- W1.4 Reset per section 3.11: each failing rule gives 422 and leaves the previous state intact (old logins still work); a valid fixture gives 204 and only that fixture is visible; repeated resets work; the 1000-user fixture answers within 10 s; a fixture payment with `settlement_id` shows it in the feed, one without shows `null`; a token issued before a reset is 401 after it, even when the new fixture reuses the same user ids (critic M49).
 - W1.5 Signup and login per section 3.8: every row of the table, derived handles (`Dee.Ann+tag@example.com` → `dee_ann_tag`, 30 × `a` → 20 × `a`, upper case and non-ASCII local parts), `handle_taken` creates no account, `email_taken` is case-insensitive, seeded users log in at once, several tokens per account all work.
 - W1.6 Every non-exempt endpoint rejects a missing header, another scheme, an empty token and an unknown token with 401; exempt endpoints ignore even an invalid `Authorization` header.
 - W1.7 `GET /me` per section 3.6 for seeded and new users (new users hold 0 in the service currency).
@@ -462,4 +462,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
 | Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) and verdict scope (section 0) | builder, verifier, critic | 06:53Z | — | sent |
 | HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | verified at 2ffcbe8 instead (1bd9c8d lacks D34/D35) | awaiting critic |
-| HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | verifier PASS W1+W2 07:03Z | awaiting critic |
+| HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (test for M49 owed by verifier); verifier PASS W1+W2 07:03Z | awaiting critic |
