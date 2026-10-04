@@ -471,3 +471,10 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W5 @ 295378c (builder) | verifier, critic | 07:49Z | verifier PASS 07:54Z; final check (isolated, main repo @ 720e1c5) claimed stage 1 | awaiting critic |
 | Liveness resend to critic: W3, W4, W5 reviews (no acknowledgement for 20 min) | critic | 07:50Z | critic 07:53Z: all three started; W3 and W4 each have a finding | acknowledged |
 | HANDOFF W4 (fix, D37) + W5 @ 484349f (builder) | verifier, critic | 08:10Z | verifier PASS W4+W5 08:19Z; final check (isolated, main @ 49c151d) claimed stage 1; critic APPROVED W4, BLOCKED W5 (E19, E04, depth; D38) | W4 ACCEPTED; W5 blocked |
+
+## 8. Stage close
+
+- Every item is ACCEPTED: W1 and W2 @ 2ffcbe8, W3 @ 2455a8d, W4 and W5 @ 484349f, W6 (acceptance suite) @ fc36063. Product code after 484349f changes only in tests (builder tests 850f706).
+- The specification trace (section 6) maps all 97 normative lines of stage-1.md to tests; the list of untested requirements is empty.
+- The commit that adds this section is the stage's final commit. The verifier runs the final graded-mode check on it with a clean tree, and the stage report in the room names the commit and the results. After the report, `stage-1/` is frozen: no seat edits it again.
+- Left unproven, recorded for the report: M05 (a reset landing inside a login's scrypt wait; the code re-validates but no test can hit the window deterministically), D36 (stored request bodies above about 64 MiB cannot be re-imported), R21/S04 (per-member timestamps are equivalent within one millisecond; a forced skew is caught).
