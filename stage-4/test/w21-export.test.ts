@@ -64,6 +64,7 @@ async function populate() {
   const capRefund = await post(bob, `/payments/${capture.payment_id}/refunds`, { amount: 20 });
   const memberRefund = await post(cy, `/payments/${m2.payment_id}/refunds`, { amount: 5 });
   const late = await post(ada, '/payments', { to_handle: 'bob', amount: 10 });
+  const late2 = await post(ada, '/payments', { to_handle: 'bob', amount: 300 });
   const fix = await post(ada, `/payments/${paid.payment_id}/corrections`, { expected_revision: 1, amount: 900, effective_at: paid.created_at, reason: 'less' });
   const batchKey = key();
   const batchBody = { corrections: [
@@ -72,7 +73,7 @@ async function populate() {
   ] };
   const batch = await post(ada, '/correction-batches', batchBody, batchKey);
   const snapAfter = (await bob.get('/statement?limit=3')).body;
-  return { ada, bob, cy, paid, settled, m1, m2, hold, capture, refund, refundKey, capRefund, memberRefund, late, fix, batch, batchKey, batchBody, snapBefore, snapAfter };
+  return { ada, bob, cy, paid, settled, m1, m2, hold, capture, refund, refundKey, capRefund, memberRefund, late, late2, fix, batch, batchKey, batchBody, snapBefore, snapAfter };
 }
 
 async function views(clients: Client[], paymentIds: string[]) {
@@ -264,7 +265,8 @@ describe('invalid schema-4 states (W21.4)', () => {
       ['refund_of not a string', patch((st) => { pay(st, w.refund.payment_id).refund_of = 5; })],
       ['refund_of unknown', patch((st) => { pay(st, w.refund.payment_id).refund_of = 'p_none'; })],
       ['refund_of names a refund', patch((st) => { pay(st, w.late.payment_id).refund_of = w.refund.payment_id; })],
-      ['refund_of names a later payment', patch((st) => { pay(st, w.refund.payment_id).refund_of = w.late.payment_id; })],
+      // late2 is ada -> bob 300, later than the refund: only the order is wrong.
+      ['refund_of names a later payment', patch((st) => { pay(st, w.refund.payment_id).refund_of = w.late2.payment_id; })],
       ['refund parties not reversed', patch((st) => { pay(st, w.late.payment_id).refund_of = w.paid.payment_id; })],
       ['refund with a request', patch((st) => { pay(st, w.refund.payment_id).request_id = 'rq_x'; })],
       ['refund with a settlement', patch((st) => { pay(st, w.memberRefund.payment_id).settlement_id = w.settled.settlement_id; })],
