@@ -108,6 +108,7 @@ def test_password_length_in_code_points(world, password, status):
 @pytest.mark.parametrize("email", [
     "plain", "@example.com", "local@", "a@@example.com", "a@b@example.com", "a b@example.com",
     "a@exa mple.com", "tab\t@example.com", "nl\n@example.com", "", " ", "a" * 250 + "@example.com",
+    "bell\u0007@example.com", "a@example.com\u0000", "del\u007f@example.com",
 ])
 def test_email_must_be_local_at_domain(world, email):
     expect_error(signup(world, email), 422, "validation_failed")

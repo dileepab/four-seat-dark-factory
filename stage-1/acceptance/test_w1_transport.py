@@ -124,6 +124,8 @@ BAD_BODIES = {
     "trailing garbage": b'{"email": "a@example.com"} x',
     "invalid utf8": b'{"email": "a\xff@example.com", "password": "correct horse", "display_name": "X"}',
     "unpaired surrogate": b'{"email": "z@example.com", "password": "correct horse", "display_name": "\\ud800"}',
+    "unpaired surrogate in a key": b'{"email": "z@example.com", "password": "correct horse", "display_name": "Z", "\\udc00": 1}',
+    "lone low surrogate": b'{"email": "z@example.com", "password": "correct horse", "display_name": "a\\udfffb"}',
     "nan literal": b'{"amount": NaN}',
     "single quotes": b"{'email': 'a@example.com'}",
     "deep nesting": b'{"x": ' + b"[" * 200 + b"]" * 200 + b"}",
@@ -200,6 +202,18 @@ def _signup_with_padding(n_bytes: int) -> bytes:
 
 def test_body_just_under_one_mib_is_accepted(world):
     expect(world.svc.api().post("/auth/signup", content=_signup_with_padding(MIB - 4096)), 201)
+
+
+def test_body_of_exactly_one_mib_is_accepted(world):
+    """PLAN 3.2 (D8): the limit is 1 MiB; only a larger body is 422."""
+    body = _signup_with_padding(MIB)
+    assert len(body) == MIB
+    expect(world.svc.api().post("/auth/signup", content=body), 201)
+
+
+def test_body_of_one_mib_plus_one_byte_is_422(world):
+    expect_error(world.svc.api().post("/auth/signup", content=_signup_with_padding(MIB + 1)),
+                 422, "validation_failed")
 
 
 def test_body_over_one_mib_is_422_and_answered(world):

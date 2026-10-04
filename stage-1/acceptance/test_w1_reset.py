@@ -150,6 +150,18 @@ def test_reset_replaces_everything(world):
     assert world.svc.client("ann").balance() == 3
 
 
+def test_reset_to_the_same_fixture_invalidates_every_earlier_token(world):
+    """I25/I13: an accepted reset replaces all state, tokens included, even when the user ids repeat."""
+    seeded_token = world.ada.token
+    login_token = expect(world.svc.login("bob@example.com", "pw-bob-Correct-Horse-9"), 200)["token"]
+    expect(world.svc.signup("tok@example.com", "correct horse", "Tok"), 201)
+    signup_token = world.svc.accounts["tok"].token
+    world.svc.must_reset(world.fixture)
+    for t in (seeded_token, login_token, signup_token):
+        expect_error(world.svc.api(t).get("/me"), 401, "unauthenticated")
+    assert world.svc.client("ada").balance() == 10_000   # a fresh login works
+
+
 def test_repeated_resets_work(svc):
     for i in range(3):
         fx = fixture([user("ada", 100 + i), user("bob", i)])

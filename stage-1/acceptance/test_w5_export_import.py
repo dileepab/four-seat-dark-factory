@@ -143,6 +143,23 @@ def test_round_trip_in_the_same_container(svc):
     expect(svc.login("ZED@example.com", "pw-zed-Correct-Horse-9"), 200)
 
 
+def test_import_drops_tokens_issued_after_the_export_for_the_same_users(svc, svc_b):
+    """I25/I13 for import: tokens not in the imported state stop working, even for user ids that exist in it."""
+    rich = build_rich_state(svc)
+    snap = svc.export()
+    after = {h: expect(svc.login(a.email, a.password), 200)["token"]
+             for h, a in svc.accounts.items() if h in ("ada", "sam")}
+    expect(svc.import_(snap), 204)
+    for t in after.values():
+        expect_error(svc.api(t).get("/me"), 401, "unauthenticated")
+    assert svc.client("ada").me()["user_id"] == "u_ada"     # the exported token still works
+    # The same in a second container that already holds its own token for the same user ids.
+    svc_b.must_reset(rich_fixture())
+    b_token = svc_b.client("ada").token
+    expect(svc_b.import_(snap), 204)
+    expect_error(svc_b.api(b_token).get("/me"), 401, "unauthenticated")
+
+
 def test_round_trip_into_a_second_container(svc, svc_b):
     rich = build_rich_state(svc)
     before = observe(svc, rich["handles"])
