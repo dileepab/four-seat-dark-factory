@@ -211,3 +211,76 @@ My reruns on 16adbc0 used suite 5e17085, local servers, and the named test files
 | H02, H04, C06d (`>=` becomes `>` at exactly the deadline) | Survive at 16adbc0, which cannot import a schema-2 state. Equivalent in practice at this commit. The W8.2 exact-deadline import test is the deterministic check; see the W8 entry. |
 
 The block is resolved, and every other W7 finding stands as recorded above.
+
+## W8: BLOCKED @ 54acbcd31a5be2c046d9bd65ef6053268ca30538
+
+The verifier's PASS is on 54acbcd with suite 62c4a4e (plan 35be9a4). Suite 5e17085 is a tests-only delta, and its touched files reran on 54acbcd with 123 passed. The product change since W7 (16adbc0) is `src/snapshot.ts` only (+85 lines). The product is right in every case below. The tests are not.
+
+### Reason: four one-line breaks of the import pass every test
+
+Each mutant changes one line of `src/snapshot.ts`. Each survives:
+- `npm test`: 137 passed;
+- the W7 and W8 files of suite 5e17085 on 54acbcd: 130 passed, the same as the clean baseline.
+
+`.work/critic-h6bj/probe_w8.py` (run by `run_probe_w8.py`, log `log_probe_w8.txt`) shows the clean product right and each mutant wrong:
+
+| Mutant | Change | Clean 54acbcd | Mutant | Why no test sees it |
+|---|---|---|---|---|
+| E16: D48; 3.12 "`expires_at` exactly as stored" | `expiresAt: a.expires_at` becomes `new Date(expiresMs).toISOString()` with `+00:00` | A hold seeded with `2099-06-15T10:20:30.123456+05:30` reads the same after an export and import | It reads `2099-06-15T04:50:30.124+00:00` | The round-trip fixture seeds only `hours_from_now()` values, already in the service's own form, so normalizing changes nothing |
+| E17: W8.4, I32 | `isInt(a.captured_amount, 0, a.amount)` becomes `isInt(a.captured_amount, 0, MAX_AMOUNT)` | A seeded `captured` hold of 100, exported with `captured_amount` edited to 150: 422 | 204. The state then holds 150 captured against 100 authorized | "captured above amount" edits the open partial hold, which the separate open rule (`captured_amount < amount`) refuses anyway |
+| E26: 3.12 "whose `expires_at` is after the import's `now`" | `a.expiresMs > importMs` becomes `>=` | Export edited: `last_ts` set to an open hold's `expires_at`, the hold raised to 1500 (payer's total 1000). Result: 204, then `expired`, held 0, available 1000 | 422 "the open authorizations of u_ada hold more than its total" | The exact-deadline test's hold of 400 fits within the payer's total, so counting it changes nothing |
+| E32: 3.12 "the remainders", I33 | `+ a.amount - a.capturedAmount` becomes `+ a.amount` | ada (balance 1000) authorizes 1000 to bob; bob captures 600 with `final: false`; ada now has total 400, held 400. The unchanged export imports with 204 | 422: a state the service built does not import back | The round trip's partially captured hold is small against its payer's total |
+
+### Missing evidence (verifier)
+
+The product needs no change. A rerun of the touched tests on 54acbcd carries the PASS over as a tests-only delta, and I will rerun the four mutants against it. Tests that fail on these mutants:
+1. E16: a round trip of a hold seeded with an `expires_at` not in the service's form, here and into a second container. Use another offset and more than three fractional digits, for example `2099-06-15T10:20:30.123456+05:30`. After the import, `GET /authorizations` returns exactly the seeded string, and a second export carries it unchanged.
+2. E17: "captured above amount" also on a closed authorization (a `captured` one, and a `voided` or `expired` one). `captured_amount` = `amount` + 1 is 422 with nothing changed.
+3. E26: the exact-deadline import with the hold's remainder above the payer's total. It is still 204, then `expired` with held 0, and capture is 409 `authorization_expired`.
+4. E32: a round trip of a partially captured open hold whose full amount is above the payer's total but whose remainder is not. For example: authorize the payer's whole balance, then capture most of it with `final: false`. Expected, here and in a second container: 204, `held` equal to the remainder, and a later capture of the rest succeeds.
+
+### Mutants (27 on 54acbcd; `.work/critic-h6bj/mutants_w8.json`, results `results_w8_unit2.json`, reruns `log_w8_rerun.txt` and `rerun_logs/`)
+
+- `npm test` kills 22 for the mutated reason: E01–E10, E14, E15, E18–E23 and E27–E30. They cover:
+  - the export's fields, TTL, `closed_at` and stored status;
+  - the import's validation rows, clock and D62;
+  - the holds check's clock and its past-deadline rule.
+- Five survive `npm test`. I reran them against suite 5e17085's `test_w7_fixture.py`, `test_w7_expiry.py`, `test_w8_export_import.py` and `test_w8_upgrade.py` (`--upto 8`, local servers, the frozen stage-1 for the upgrade). Each gives 130 passed, as clean does.
+  - E16, E17, E26 and E32 are the block above.
+  - E31 (a schema-1 import reads an `authorizations` array if one is present) is equivalent on every input the plan defines: schema 1 is "an unchanged stage-1 export", and stage 1 never exports authorizations. Recorded only.
+
+W7 boundary mutants, rerun on 54acbcd against suite 5e17085 (`plan_w8_rerun.json`):
+
+| Mutant | Result |
+|---|---|
+| H04 (status: `>=` becomes `>` at exactly `expires_at`) | Killed by `test_an_imported_clock_at_exactly_a_deadline_expires_the_hold`: "authorization status: expected 'expired', got 'open'" |
+| C06d (capture: `>=` becomes `>`) | Killed by the same test: "expected 409 authorization_expired, got 201" |
+| H04b (status 300 ms late) | Killed by the same test and by `test_the_deadline_releases_the_hold_at_once_on_the_service_clock`: "expected 'expired', got 'open'" |
+| H02b (`held` 300 ms late) | Killed by `test_the_deadline_releases_the_hold_at_once_on_the_service_clock` |
+| X15 (a reset keeps an imported clock) | Killed by `test_reset_after_an_import_whose_clock_ran_ahead_starts_the_clock_at_the_reset` |
+| H02 (`held`: `>` becomes `>=`) | Survives; equivalent in practice. `heldBy` (`src/state.ts:276`) drops holds with `expiresMs <= lastTs` before comparing with now, and now is `max(wall, lastTs)`. The two forms differ only if the wall clock reads `expires_at` to the millisecond while ahead of `lastTs`. The builder agreed. |
+
+H04, C06d, H04b and H02b were the open boundary items of the W7 entry. The W8.2 exact-deadline test closes them.
+
+### Clause map (W8)
+
+| Clause | Code at 54acbcd |
+|---|---|
+| W8.1 export contents: `format_version` 1, `schema` 2, the TTL, each payment's `authorization_id`, and every authorization with its stored fields (stored status, `expires_at` as stored, `created_at`, `closed_at`, `payment_ids`) | `src/snapshot.ts:29-76` (`exportState`, one synchronous call) |
+| 3.12: import accepts schema 1 or 2, any other is 422 | `snapshot.ts:125-126` |
+| 3.12: schema 2 needs the TTL (1 to 10^10); schema 1 has TTL 600, no authorizations, payments `authorization_id: null` | `snapshot.ts:132-140`, `:178`, `:186`, `:244` (`if (v2)`) |
+| 3.11 and 3.12: authorization fields. Ids unique; parties existing and different; amount; `captured_amount` 0 to `amount`; an open hold needs `captured_amount < amount`; status; `expires_at` RFC 3339, up to 64 characters; `created_at`; `closed_at` | `snapshot.ts:244-263` |
+| D62: `payment_id`, `payment_ids` and a payment's `authorization_id` checked by type only | `snapshot.ts:178`, `:259-261` |
+| 3.12: the last issued timestamp covers `created_at` and `closed_at` (I29; the W7.8 re-base) | `snapshot.ts:144-146`, `:264-265`, `:297` |
+| 3.12 holds check: the open remainders whose `expires_at` is after `now = max(wall, last_ts)` total at most the payer's total | `snapshot.ts:302-310` |
+| W8.4: every refusal is 422 with nothing changed | `handlers/system.ts:25-29`: `importState` builds a fresh state and throws before `swapState` |
+| W8.2: open holds keep expiring by the clock after an import | The imported `expiresMs`, with the W7 status rule and `heldBy` (`state.ts:270-280`) |
+| W8.3: stored stage-1 replay bodies are kept verbatim | `snapshot.ts:285-293` (body and response copied as given) |
+
+Every clause has code, so there is no product defect.
+
+### Other checks
+
+- Special-casing grep on the W8 product diff (fixture handles, ids, `2099`, sentinel values): nothing.
+- The import validates, then makes one synchronous swap. The W8 product diff has no `await`.
+- The verifier's run covers the offline build. RUN.md is unchanged since W7 and needs nothing for W8.
