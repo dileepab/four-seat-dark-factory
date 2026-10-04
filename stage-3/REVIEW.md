@@ -270,3 +270,43 @@ Each survivor below has "546 passed" on b4f6d16 unless stated. The runs are in `
 
 - Everything else in W14 to W17 that I probed, mutated or read: instants and their grammar (G01 to G15), echo and decoding (Q01 to Q03, R01 to R06), historical holds and B1 and B2 (H01 to H15), seeded times and opening balances (X01 to X09), issued times and order (S01 to S03), `closed_at` (V01, V02), statements (T01 to T22 apart from T05), corrections (K01 to K34 apart from K12 and K25), and export and import (E02 to E27 apart from E14, E16 and E26).
 - The verifier's evidence for W17.5 (RUN.md), the offline build and the supplied checks.
+
+## W14, W15, W16, W17 @ 0acff74, re-review with suite 3c5b827 (W18.8): APPROVED
+
+- Product: `0acff74a4c06953d198fe48a9731271333372c3d`, unchanged since the BLOCK (4d64dfa).
+- Suite: `3c5b82764b5264941679a2c547ea12504dfb3bad`. Since b4f6d16 it changes tests only: `support.py` and seven test files.
+  - Nothing under `stage-3/src`, `stage-3/test`, the Dockerfile or RUN.md changed. `git diff --stat b4f6d16 3c5b827` on those paths is empty.
+  - The other commits in between change only PLAN.md and this file.
+- Verifier PASS at 0acff74:
+  - with b4f6d16: "2586 passed";
+  - carried over to 3c5b827 by the planner's ruling for a tests-only change;
+  - the changed files on 0acff74 in a clean worktree: exit 0, "696 passed in 132.22s".
+
+| Item | Verdict | The test that now kills each survivor |
+|---|---|---|
+| W14 | APPROVED | G16 `test_w14_history::test_trailing_fraction_zeros_do_not_change_an_instant`; Q04 `test_w14_instants::test_a_broken_percent_escape_is_422_not_absent`, with its statement twin; V03 `test_w14_holds::test_a_clock_expired_seeded_hold_closes_at_its_deadline_exactly_as_written` |
+| W15 | APPROVED | T05 `test_w15_statements::test_ties_sort_by_payment_id_code_points`, now with `p_😀` and `p_ｚ` |
+| W16 | APPROVED | K12 `test_w16_corrections::test_one_instant_is_combined_with_the_debit_created_first`; K25b `test_w16_corrections::test_no_clock_tolerance_on_effective_at`, plus `effective_at ≤ recorded_at` in `check_revision` |
+| W17 | APPROVED | E14 and E16 `test_w17_export::test_rejected_schema_3_import_changes_nothing`, cases [snapshot cutoff beyond the sequence] and [base captured amount not adding up]; E26 `test_w17_upgrade::test_stage_2_partly_captured_hold_and_display_only_links`, with the link of 450 larger than the base of 400 |
+
+### What I checked
+
+1. **Each new test against its rule, not only against its mutant.**
+   - G16 puts the extra zeros on the record (`.500Z` against `.5+05:30`) and checks the feed, `as_of` with 1 and 10 digits, 1e-7 s earlier, and `known_at`.
+   - Q04 covers `%ZZ`, `%`, `%2`, `%FF` and a trailing `%ZZ`, on `as_of` and `known_at` and on the statement's `from`, `to` and `known_at`.
+   - V03 seeds a `+05:30` microsecond deadline.
+   - T05 compares against Python's code-point `sorted`.
+   - K12 creates the debit first and checks Dee at the instant and 1 µs before it.
+   - K25b goes 200 ms ahead of a fresh time mark. On a slow host it accepts a 201 only when `recorded_at` is at or after `effective_at`, so it cannot fail a correct product by timing.
+   - E14 and E16 each corrupt one field that appears once in the state.
+   - E26 keeps the import at 204 and checks 600 and 500 held.
+2. **My survivors rerun on 3c5b827** (`.work/critic-h6bj/log_s3_p6.txt`). Local 0acff74, the eight W14 to W17 files, my own frozen stage-1 and stage-2 builds. The clean run gives "574 passed". Each survivor fails in its new test for its own reason:
+   - G16, "1 failed": the feed is `['p_first', 'p_second']`.
+   - Q04, "8 failed", stopped at maxfail 8: each broken escape gets 200 with the present view.
+   - V03, "1 failed": `closed_at` is `2020-06-15T04:50:30.124+00:00`, not the deadline as written.
+   - T05, "1 failed": the tie order breaks I54.
+   - K12, "1 failed": 409 `historical_overdraft`.
+   - E14 and E16, "1 failed, 1 error": the import answers 204. The error is the teardown's 401 after that accepted import.
+   - K25b, "1 failed, 1 error": "D81: accepted before its effective_at", with `effective_at` `…04.843` and `recorded_at` `…04.644`. The error is the I67 teardown, which a future `effective_at` also breaks.
+   - E26, "1 failed": the import answers 422.
+3. **Earlier results carry over** (PROTOCOL, "When the verdict commit moves"). They are the 112 kills, the probes, and everything the BLOCK entry lists as checked and fine.
