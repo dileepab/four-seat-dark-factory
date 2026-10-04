@@ -9,10 +9,10 @@ Frozen references: `stage-1/` (accepted at 4baf8d9) and `stage-2/` (accepted at 
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | BUILDING (first handed off at e98c86a, superseded; the plan revision f745388 is built into 0acff74; one HANDOFF of W14 to W17 follows its gate, D87) | 0acff74 |
-| W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | BUILDING (1268dd8, revised in 0acff74; handed off with W14, D87) | 0acff74 |
-| W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | BUILDING (951904d, revised in 0acff74; handed off with W14, D87) | 0acff74 |
-| W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | BUILDING (f80fc0d, revised in 0acff74; handed off with W14, D87) | 0acff74 |
+| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | HANDED_OFF (with W15-W17 at 0acff74, 14:29Z, D87; the e98c86a handoff is superseded) | 0acff74 |
+| W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | HANDED_OFF (1268dd8, revised in 0acff74; handed off with W14 at 14:29Z, D87) | 0acff74 |
+| W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | HANDED_OFF (951904d, revised in 0acff74; handed off with W14 at 14:29Z, D87) | 0acff74 |
+| W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | HANDED_OFF (f80fc0d, revised in 0acff74; handed off with W14 at 14:29Z, D87) | 0acff74 |
 | W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | BUILDING (first suite f5df9a1 at 14:11Z; trace filled from it; gap criteria W18.7 requested at 14:15Z) | f5df9a1 |
 
 Item numbers continue from stage 2 (W1–W13). States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
@@ -362,7 +362,8 @@ Each normative line of stage-3.md, condensed (T1-T70), with the acceptance tests
 | Stage-3 handoff, parts 1-18 (plan 4497d6f) | builder, verifier, critic | 13:22Z | builder (W14 started; commit e98c86a 13:38Z), critic (plan review started), verifier by 13:43Z after a liveness check at 13:42Z (W14-W16 tests drafted) | acknowledged |
 | HANDOFF W14 @ e98c86a (builder) | verifier, critic | by 13:51Z | — | superseded by the W14-W17 handoff at 0acff74 (D87) |
 | Critic plan review @ 4497d6f (REVIEW.md 6093fff: 3 defects, 2 smaller, 2 wording, 5 criteria) -> plan revision: 3.8 (D84, D85), 3.9 (requested page; future `from`), 3.11 (D84, D86), I50, I61, I67, D71, D72, W14.1, W14.6, W14.7, W15.1, W16.9, W17.2, W17.3 | builder, verifier, critic | 13:56Z | critic (every point resolved), builder (built into 0acff74 at 14:05Z, on W15 1268dd8, W16 951904d, W17 f80fc0d) | done |
-| Builder: one HANDOFF of W14 to W17 at 0acff74 once its gate is green -> planner: accepted, verdicted as W17 (D87) | builder, verifier, critic | 14:05Z | critic 14:07Z (one review, a verdict per item) | awaiting the HANDOFF |
+| Builder: one HANDOFF of W14 to W17 at 0acff74 once its gate is green -> planner: accepted, verdicted as W17 (D87) | builder, verifier, critic | 14:05Z | critic 14:07Z (one review, a verdict per item) | done: HANDOFF W14-W17 at 0acff74 by 14:29Z (2 parts) |
+| HANDOFF W14-W17 @ 0acff74 (builder): npm 203/203; acceptance f5df9a1 --upto 17: 1 failed (the stage-2 RUN.md check wants `--stage 2`), 2583 passed; harness s3-b04: stages 1-3 pass, claimed stage 3, stage 4 fails -> planner 14:30Z: the RUN.md check comes to the stage-3 contract (W18.1); the builder's two test races (note-verifier-races.md) are fixed before the verdict; the verdict runs on the suite with W18.7 | verifier, critic, planner | 14:29Z | planner 14:30Z | awaiting the suite with W18.7, then the verdict |
 | Verifier: first W18 suite f5df9a1 (14:11Z) with a trace map -> planner: trace filled (one test name corrected, T5); gaps W18.7a-c | verifier, critic, builder | 14:15Z | — | sent |
 
 ## 8. Stage close
