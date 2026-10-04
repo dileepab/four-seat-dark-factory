@@ -51,21 +51,41 @@ def test_lost_payment_shows_pay_uncertain_and_an_unchanged_retry_pays_once(world
     expect(ui.el(f"activity-item-{found[0]['payment_id']}")).to_be_visible()
 
 
-def test_response_held_past_six_seconds_is_uncertain(world, ui):
+def test_response_held_past_four_seconds_is_uncertain_and_the_late_answer_is_ignored(world, ui):
+    """D43 (plan 45fe2dc): at 4 s the page aborts the request, shows pay-uncertain and re-enables pay-submit."""
     open_wallet(ui)
     held = ui.hold("/payments", "POST", fetch_first=True, count=1)
     ui.pay_form("bob", "15.00", note="slow")
     ui.click("pay-submit")
-    ui.page.wait_for_timeout(5_000)
+    ui.page.wait_for_timeout(2_500)
     ui.absent("pay-error")
-    expect(ui.el("pay-uncertain")).to_be_visible(timeout=4_000)
-    held.release()
+    expect(ui.el("pay-uncertain")).to_be_visible(timeout=3_500)
+    expect(ui.el("pay-submit")).to_be_enabled()
+    held.release()                                    # the late answer must change nothing on the page
+    ui.page.wait_for_timeout(800)
+    expect(ui.el("pay-uncertain")).to_be_visible()
+    ui.absent("pay-success")
     ui.absent("pay-error")
     ui.click("pay-submit")
     expect(ui.el("pay-success")).to_be_visible()
     ui.absent("pay-uncertain")
     ui.wallet(8_500)
     assert len(payments_with_note(world.ada, "slow")) == 1
+    sent = ui.writes("/payments")
+    assert len(sent) == 2 and sent[0].key == sent[1].key and sent[0].body == sent[1].body
+
+
+def test_a_load_held_past_four_seconds_ends_in_load_error(world, ui):
+    ui.log_in("ada")
+    held = ui.hold("/activity", "GET", fetch_first=True)
+    ui.page.goto("/")
+    expect(ui.el("load-error")).to_be_visible(timeout=6_000)
+    expect(ui.el("load-retry")).to_be_enabled()
+    held.release()
+    ui.page.unroute_all(behavior="ignoreErrors")
+    ui.click("load-retry")
+    ui.absent("load-error")
+    expect(ui.el("empty-activity")).to_be_visible()
 
 
 def test_uncertain_then_refused_retry_shows_pay_error_and_keeps_the_form(world, ui):

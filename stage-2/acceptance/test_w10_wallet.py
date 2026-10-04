@@ -389,6 +389,22 @@ def test_capture_payments_show_by_the_ordinary_rule(world, ui):
     ui.wallet(10_400)
 
 
+def test_more_than_one_page_of_payments_renders_every_item_once(svc, ui):
+    """D64 (plan 45fe2dc): every visible payment, read from the bare path and then page by page."""
+    pays = [{"id": f"p_{i:03d}", "from_user_id": "u_bob", "to_user_id": "u_ada", "amount": i + 1,
+             "note": f"n{i}"} for i in range(205)]
+    pays.append({"id": "p_hidden", "from_user_id": "u_bob", "to_user_id": "u_cy", "amount": 1, "visibility": "private"})
+    svc.must_reset(fixture(standard_users(), payments=pays))
+    open_wallet(ui)
+    expect(ui.el("activity-item-p_000")).to_be_attached()
+    order = [t for t in feed_children(ui) if t and t.startswith("activity-item-")]
+    assert order == [f"activity-item-p_{i:03d}" for i in reversed(range(205))], \
+        f"{len(order)} items; every visible payment once, newest first"
+    first = ui.reads("/activity")[0]
+    assert first.query == "", f"D64: the first feed read is the bare path, got ?{first.query}"
+    assert ui.reads("/me")[0].query == ""
+
+
 # ---------------------------------------------------------------- W10.6 refresh
 
 def test_refresh_shows_another_clients_payment_and_keeps_the_form(world, ui):

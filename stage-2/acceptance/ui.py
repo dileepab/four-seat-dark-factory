@@ -85,7 +85,13 @@ class UI:
         self.width = getattr(page, "width_id", "w")
         self.calls: list[Recorded] = []
         self.all_urls: list[str] = []
+        self.dialogs: list[str] = []
         page.on("request", self._record)
+        page.on("dialog", self._dialog)
+
+    def _dialog(self, dialog) -> None:
+        self.dialogs.append(dialog.message)
+        dialog.dismiss()
 
     # -- recording
     def _record(self, req: Request) -> None:
@@ -229,6 +235,17 @@ class UI:
             problems.append(f"horizontal scroll: scrollWidth {report['scrollWidth']} > innerWidth {report['innerWidth']}")
         problems += report["problems"]
         assert not problems, f"I46 at {self.width} on {where}:\n  " + "\n  ".join(problems[:15])
+
+    def check_scroll_at(self, width: int, height: int, where: str) -> None:
+        """I46 (plan 45fe2dc): no horizontal scroll at another size too, then back."""
+        before = self.page.viewport_size
+        self.page.set_viewport_size({"width": width, "height": height})
+        try:
+            self.page.wait_for_timeout(150)
+            sw, iw = self.page.evaluate("() => [document.documentElement.scrollWidth, window.innerWidth]")
+            assert sw <= iw, f"I46 at {width}x{height} on {where}: scrollWidth {sw} > innerWidth {iw}"
+        finally:
+            self.page.set_viewport_size(before)
 
     def check_focus(self, where: str, presses: int = 40) -> list[str]:
         """Tab through the page; every focused element shows an outline of 2px+ at 3:1 (I46)."""

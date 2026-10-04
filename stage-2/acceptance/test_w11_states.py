@@ -1,5 +1,6 @@
-"""W11.4, W9.4, W12.4 — every screen in every named state at both widths: the I46 layout checks,
-keyboard focus, and one screenshot per state (PLAN 3.14 `loading`, `load-error`, `load-retry`; 3.15).
+"""W11.4, W9.4, W12.4 — every screen in every named state at both widths: the I46 layout checks
+(and the scroll check at 1024x768 too), keyboard focus, and one screenshot per state (PLAN 3.14
+`loading`, `load-error`, `load-retry`; 3.15).
 
 Screenshots are named <screen>-<state>-<width>.png under --shots.
 """
@@ -19,6 +20,7 @@ SCREENS = {"/": ("wallet", "wallet-available"), "/requests": ("requests", "incom
 
 def state(ui, screen, name):
     ui.check_layout(f"{screen} {name}")
+    ui.check_scroll_at(1024, 768, f"{screen} {name}")
     ui.shot(screen, name)
 
 

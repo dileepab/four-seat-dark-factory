@@ -184,19 +184,37 @@ def test_nothing_is_loaded_from_another_origin_and_no_favicon_request(world, ui,
 
 # ---------------------------------------------------------------- safe rendering (I48)
 
-HOSTILE = "<img src=x onerror=\"window.__pwned=1\"><script>window.__pwned=2</script>&amp; \"q\""
+HOSTILE = "<img src=x onerror=alert(1)> &amp;"        # plan 45fe2dc, I48
+HOSTILE_2 = "<img src=x onerror=\"window.__pwned=1\"><script>window.__pwned=2</script>&amp; \"q\""
 
 
 @pytest.mark.item(10)
-def test_display_names_and_notes_render_as_text(svc, ui):
-    svc.must_reset(fixture([user("ada", 10_000, display_name=HOSTILE), user("bob", 2_500, display_name="Bob")],
+@pytest.mark.parametrize("text", [HOSTILE, HOSTILE_2], ids=["plan", "script"])
+def test_display_names_and_notes_render_as_text(svc, ui, text):
+    svc.must_reset(fixture([user("ada", 10_000, display_name=text), user("bob", 2_500, display_name="Bob")],
                            payments=[{"id": "p_x", "from_user_id": "u_bob", "to_user_id": "u_ada",
-                                      "amount": 5, "note": HOSTILE}]))
+                                      "amount": 5, "note": text}]))
     ui.log_in("ada", route="/")
-    expect(ui.el("current-user")).to_contain_text(HOSTILE)
-    expect(ui.el("activity-note-p_x")).to_have_text(HOSTILE)
+    expect(ui.el("current-user")).to_contain_text(text)
+    expect(ui.el("activity-note-p_x")).to_have_text(text)
+    ui.page.wait_for_timeout(300)
     assert ui.page.evaluate("() => window.__pwned") is None
     assert ui.page.locator("img[src='x']").count() == 0
+    assert ui.dialogs == [], f"I48: script ran: {ui.dialogs}"
+
+
+def test_signup_with_a_hostile_display_name_shows_it_literally(world, ui):
+    """W9.2 (plan 45fe2dc)."""
+    ui.page.goto("/signup")
+    ui.fill("signup-email", "eve@example.com")
+    ui.fill("signup-password", "correct horse")
+    ui.fill("signup-display-name", HOSTILE)
+    ui.click("signup-submit")
+    expect(ui.el("current-user")).to_contain_text(HOSTILE)
+    expect(ui.el("current-handle")).to_have_text("eve")
+    ui.page.wait_for_timeout(300)
+    assert ui.dialogs == [] and ui.page.locator("img[src='x']").count() == 0
+    world.svc.accounts["eve"] = Account("eve", "eve@example.com", "correct horse")
 
 
 # ---------------------------------------------------------------- I46 on the signed-out screens

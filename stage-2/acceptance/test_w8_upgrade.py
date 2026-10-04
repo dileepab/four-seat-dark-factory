@@ -131,7 +131,9 @@ def test_upgraded_state_round_trips_through_a_stage_2_export(prev, svc, svc_b):
     assert snap2.body["state"].get("schema") == 2
     before = observe(svc, rich["handles"])
     expect(svc_b.import_(snap2), 204)
-    assert observe(svc_b, rich["handles"]) == before
+    after = observe(svc_b, rich["handles"])
+    assert after == before
+    assert all(p["authorization_id"] is None for v in after.values() for p in v["feed"])
     for rp in rich["replays"]:
         r = svc_b.client(rp["who"]).post(rp["path"], json=rp["body"], key=rp["key"])
         assert expect(r, 200) == rp["resp"], rp["path"]

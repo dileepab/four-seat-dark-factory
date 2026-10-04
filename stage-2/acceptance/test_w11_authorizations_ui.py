@@ -219,19 +219,19 @@ def test_capture_of_an_expired_hold_is_refused(svc, ui):
     assert svc.client("bob").money() == (2_500, 2_500, 0)
 
 
-def test_lost_capture_is_uncertain_and_the_retry_captures_once(world, ui):
+def test_capture_lost_after_commit_shows_the_confirmed_state(world, ui):
+    """Plan 45fe2dc: the re-read shows the capture took effect, so the uncertain element gives way."""
     a = expect_status(world.bob.authorize("ada", 300), 201)["authorization_id"]
     open_auths(ui)
     ui.fault(f"/authorizations/{a}/capture", "POST", "abort-after")
     ui.click(f"authorization-capture-{a}")
-    expect(ui.el("authorization-uncertain")).to_be_visible()
-    ui.absent("authorization-error")
-    ui.shot("authorizations", "uncertain")
-    sent = ui.writes(f"/authorizations/{a}/capture")
-    assert len(sent) == 1
-    assert world.ada.balance() == 10_300
-    # The list was re-read, so the hold already reads captured; the capture identity was kept.
     expect(ui.el(f"authorization-item-{a}")).to_have_attribute("data-status", "captured")
+    expect(ui.el(f"authorization-captured-{a}")).to_have_text(money(300))
+    ui.absent("authorization-uncertain")
+    ui.absent("authorization-error")
+    assert len(ui.writes(f"/authorizations/{a}/capture")) == 1
+    assert world.ada.balance() == 10_300
+    ui.wallet(10_300)
 
 
 def test_lost_capture_before_commit_is_retried_with_the_same_key(world, ui):
@@ -248,14 +248,27 @@ def test_lost_capture_before_commit_is_retried_with_the_same_key(world, ui):
     assert world.ada.balance() == 10_300
 
 
-def test_lost_void_is_uncertain_and_the_list_is_reread(world, ui):
+def test_void_lost_after_commit_shows_the_confirmed_state(world, ui):
     a = expect_status(world.ada.authorize("bob", 300), 201)["authorization_id"]
     open_auths(ui)
     ui.fault(f"/authorizations/{a}/void", "POST", "abort-after")
     ui.click(f"authorization-void-{a}")
-    expect(ui.el("authorization-uncertain")).to_be_visible()
     expect(ui.el(f"authorization-item-{a}")).to_have_attribute("data-status", "voided")
+    ui.absent("authorization-uncertain")
     ui.wallet(10_000)
+
+
+def test_void_lost_before_commit_stays_uncertain(world, ui):
+    a = expect_status(world.ada.authorize("bob", 300), 201)["authorization_id"]
+    open_auths(ui)
+    ui.fault(f"/authorizations/{a}/void", "POST", "abort-before")
+    ui.click(f"authorization-void-{a}")
+    expect(ui.el("authorization-uncertain")).to_be_visible()
+    expect(ui.el(f"authorization-item-{a}")).to_have_attribute("data-status", "open")
+    ui.absent("authorization-error")
+    ui.click(f"authorization-void-{a}")
+    expect(ui.el(f"authorization-item-{a}")).to_have_attribute("data-status", "voided")
+    ui.absent("authorization-uncertain")
 
 
 def test_authorize_lost_response_is_uncertain_and_retry_creates_one(world, ui):
@@ -277,3 +290,28 @@ def test_bhd_amounts(svc, ui):
     open_auths(ui)
     expect(ui.el("authorization-amount-a_1")).to_have_text("12.345 BHD")
     ui.wallet(50_000, held=12_345, minor_units=3, currency="BHD")
+
+
+def test_more_than_one_page_of_authorizations_renders_every_item_once(svc, ui):
+    """D64 (plan 45fe2dc)."""
+    auths = [seeded_auth(f"a_{i:03d}", "ada" if i % 2 else "bob", "bob" if i % 2 else "ada", 1) for i in range(205)]
+    svc.must_reset(fixture(standard_users(), authorizations=auths))
+    open_auths(ui)
+    expect(ui.el("authorization-item-a_000")).to_be_attached()
+    assert items(ui) == [f"authorization-item-a_{i:03d}" for i in reversed(range(205))]
+    first = ui.reads("/authorizations")[0]
+    assert first.query == "", f"D64: the first read is the bare path, got ?{first.query}"
+    ui.wallet(10_000, held=102)
+
+
+def test_the_authorize_form_on_the_wallet_screen(world, ui):
+    """D46 (plan 45fe2dc): the same form on `/` creates a hold and updates the wallet numbers there."""
+    ui.log_in("ada", route="/")
+    expect(ui.el("wallet-available")).to_be_visible()
+    authorize(ui, "bob", "12.34", note="deposit")
+    expect(ui.el("authorize-success")).to_be_visible()
+    ui.wallet(10_000, held=1_234)
+    assert [a["amount"] for a in world.ada.auths()] == [1_234]
+    authorize(ui, "bob", "999")
+    expect(ui.el("authorize-error")).to_be_visible()
+    ui.wallet(10_000, held=1_234)

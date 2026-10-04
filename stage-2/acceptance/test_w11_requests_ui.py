@@ -150,24 +150,40 @@ def test_lost_pay_response_is_uncertain_and_the_retry_reuses_the_key(world, ui):
     assert world.ada.balance() == 10_000 - 750
 
 
-def test_pay_lost_after_commit_then_retried_moves_money_once(world, ui):
+def test_pay_lost_after_commit_shows_the_confirmed_state(world, ui):
     rid = expect_status(world.bob.ask("ada", 700), 201)["request_id"]
     open_requests(ui)
     ui.fault(f"/requests/{rid}/pay", "POST", "abort-after")
     ui.click(f"request-pay-{rid}")
-    expect(ui.el("request-uncertain")).to_be_visible()
-    expect(ui.el(f"request-item-{rid}")).to_have_attribute("data-status", "paid")   # the list is re-read
+    # The list is re-read after the unknown outcome; it shows the payment took effect, so the
+    # uncertain element gives way to the confirmed state (plan 45fe2dc).
+    expect(ui.el(f"request-item-{rid}")).to_have_attribute("data-status", "paid")
+    ui.absent("request-uncertain")
+    ui.absent("request-error")
+    ui.absent(f"request-pay-{rid}")
     assert world.ada.balance() == 9_300
 
 
-def test_lost_decline_is_uncertain_and_the_list_is_reread(world, ui):
+def test_decline_lost_after_commit_shows_the_confirmed_state(world, ui):
     rid = expect_status(world.bob.ask("ada", 100), 201)["request_id"]
     open_requests(ui)
     ui.fault(f"/requests/{rid}/decline", "POST", "abort-after")
     ui.click(f"request-decline-{rid}")
-    expect(ui.el("request-uncertain")).to_be_visible()
-    ui.absent("request-error")
     expect(ui.el(f"request-item-{rid}")).to_have_attribute("data-status", "declined")
+    ui.absent("request-uncertain")
+    ui.absent("request-error")
+
+
+def test_lost_decline_before_commit_stays_uncertain_and_the_retry_declines(world, ui):
+    rid = expect_status(world.bob.ask("ada", 100), 201)["request_id"]
+    open_requests(ui)
+    ui.fault(f"/requests/{rid}/decline", "POST", "abort-before")
+    ui.click(f"request-decline-{rid}")
+    expect(ui.el("request-uncertain")).to_be_visible()
+    expect(ui.el(f"request-item-{rid}")).to_have_attribute("data-status", "pending")
+    ui.click(f"request-decline-{rid}")
+    expect(ui.el(f"request-item-{rid}")).to_have_attribute("data-status", "declined")
+    ui.absent("request-uncertain")
 
 
 def test_seeded_hold_blocks_a_request_payment_in_the_ui(svc, ui):
@@ -177,3 +193,17 @@ def test_seeded_hold_blocks_a_request_payment_in_the_ui(svc, ui):
     ui.click("request-pay-rq_1")
     expect(ui.el("request-error")).to_be_visible()
     expect(ui.el("request-item-rq_1")).to_have_attribute("data-status", "pending")
+
+
+def test_more_than_one_page_of_requests_renders_every_item_once(svc, ui):
+    """D64 (plan 45fe2dc): one GET /requests read, page by page, split on the client."""
+    reqs = [{"id": f"rq_i{i:03d}", "requester_id": "u_bob", "payer_id": "u_ada", "amount": i + 1} for i in range(150)]
+    reqs += [{"id": f"rq_o{i:03d}", "requester_id": "u_ada", "payer_id": "u_cy", "amount": i + 1} for i in range(55)]
+    svc.must_reset(fixture(standard_users(), requests=reqs))
+    open_requests(ui)
+    expect(ui.el("request-item-rq_i000")).to_be_attached()
+    expect(ui.el("request-item-rq_o000")).to_be_attached()
+    assert children(ui, "incoming-list") == [f"request-item-rq_i{i:03d}" for i in reversed(range(150))]
+    assert children(ui, "outgoing-list") == [f"request-item-rq_o{i:03d}" for i in reversed(range(55))]
+    first = ui.reads("/requests")[0]
+    assert first.query == "", f"D64: the first read is the bare path, got ?{first.query}"
