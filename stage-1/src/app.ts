@@ -1,0 +1,119 @@
+// The HTTP server: transport, body reading, routing and the error envelope.
+
+import http from 'node:http';
+import type { Duplex } from 'node:stream';
+import type { Ctx, Result } from './context.ts';
+import { ApiError, errorBody, notFound } from './errors.ts';
+import { matchRoute } from './routes.ts';
+
+const API_BODY_LIMIT = 1024 * 1024; // 1 MiB (D8)
+const TEST_BODY_LIMIT = 64 * 1024 * 1024; // reset and import (D8)
+const MAX_HEADER_SIZE = 1024 * 1024 + 16 * 1024; // header blocks up to 1 MiB (D28)
+
+class BodyAborted extends Error {}
+
+export function createApp(): http.Server {
+  const server = http.createServer({ maxHeaderSize: MAX_HEADER_SIZE }, (req, res) => {
+    void serve(req, res);
+  });
+  server.on('clientError', answerClientError);
+  return server;
+}
+
+async function serve(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  try {
+    const result = await dispatch(req);
+    send(res, result.status, result.body);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      send(res, err.status, errorBody(err.code, err.message));
+    } else if (err instanceof BodyAborted) {
+      res.destroy();
+    } else {
+      console.error(err);
+      send(res, 500, errorBody('internal_error', 'unexpected server error'));
+    }
+  }
+}
+
+async function dispatch(req: http.IncomingMessage): Promise<Result> {
+  const method = req.method ?? 'GET';
+  const target = req.url ?? '/';
+  const q = target.indexOf('?');
+  const rawPath = q < 0 ? target : target.slice(0, q);
+  const query = new URLSearchParams(q < 0 ? '' : target.slice(q + 1));
+  const match = matchRoute(method, rawPath);
+  // The body is always drained, so the client can read the answer whatever it is.
+  const { body, tooLarge } = await readBody(req, match?.route.testBody ? TEST_BODY_LIMIT : API_BODY_LIMIT);
+  if (!match) throw notFound(`no route for ${method} ${rawPath}`);
+  const ctx: Ctx = {
+    method, path: match.path, query, headers: req.headers, params: match.params, body, tooLarge,
+  };
+  return await match.route.handler(ctx);
+}
+
+function readBody(req: http.IncomingMessage, limit: number): Promise<{ body: Buffer; tooLarge: boolean }> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let tooLarge = false;
+    let settled = false;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (tooLarge) return;
+      if (size > limit) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      settled = true;
+      resolve({ body: tooLarge ? Buffer.alloc(0) : Buffer.concat(chunks), tooLarge });
+    });
+    const abort = () => {
+      if (!settled) {
+        settled = true;
+        reject(new BodyAborted());
+      }
+    };
+    req.on('error', abort);
+    req.on('close', abort);
+  });
+}
+
+function send(res: http.ServerResponse, status: number, body: unknown): void {
+  if (res.headersSent || res.destroyed) return;
+  if (status === 204 || body === undefined) {
+    res.writeHead(status);
+    res.end();
+    return;
+  }
+  const text = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(text),
+  });
+  res.end(text);
+}
+
+// Requests the HTTP parser itself refuses still get the envelope (D28).
+function answerClientError(err: Error & { code?: string }, socket: Duplex): void {
+  if (err.code === 'ECONNRESET' || !socket.writable) {
+    socket.destroy();
+    return;
+  }
+  const oversized = err.code === 'HPE_HEADER_OVERFLOW';
+  const status = oversized ? 422 : 400;
+  const text = JSON.stringify(oversized
+    ? errorBody('validation_failed', 'the request headers are too large')
+    : errorBody('malformed_request', 'the request could not be parsed'));
+  socket.end(
+    `HTTP/1.1 ${status} ${oversized ? 'Unprocessable Entity' : 'Bad Request'}\r\n`
+    + 'Content-Type: application/json; charset=utf-8\r\n'
+    + `Content-Length: ${Buffer.byteLength(text)}\r\n`
+    + 'Connection: close\r\n\r\n'
+    + text,
+  );
+}
