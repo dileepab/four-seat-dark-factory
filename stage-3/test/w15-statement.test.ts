@@ -100,6 +100,11 @@ describe('statement shape, order and windows (W15.1, W15.2, W15.3)', () => {
     assert.deepEqual([before.entries, before.opening_balance, before.closing_balance], [[], 10_042, 10_042]);
     const future = await statementOf(ada, { from: '2030-01-01T00:00:00Z', to: '9999-12-31T23:59:59Z' });
     assert.deepEqual([future.entries, future.opening_balance, future.closing_balance], [[], 10_000, 10_000]);
+    // A future from with to omitted: an empty window at the balance of the read (D72).
+    const ahead = await statementOf(ada, { from: '9999-12-31T23:59:59Z', limit: 1 });
+    const total = (await ada.get('/me')).body.total;
+    assert.deepEqual([ahead.entries, ahead.opening_balance, ahead.closing_balance, ahead.has_more], [[], total, total, false]);
+    assert.deepEqual(await statementOf(ada, { snapshot: ahead.snapshot, limit: 1 }), ahead);
     const fromOnly = await statementOf(ada, { from: '2020-01-02T00:00:00+00:00' });
     assert.deepEqual(ids(fromOnly), ['p_zero', 'p_late']);
     // A literal + in the query is a plus sign.
@@ -112,7 +117,7 @@ describe('statement shape, order and windows (W15.1, W15.2, W15.3)', () => {
     for (const params of [
       { from: '' }, { to: '' }, { known_at: '' }, { from: '2020-01-01' }, { to: '2020-01-01T00:00:00' },
       { from: '2020-02-30T00:00:00Z' }, { to: '2020-01-01T24:00:00Z' }, { known_at: '2020-01-01T00:00:00+24:00' },
-      { from: '2020-01-02T00:00:00Z', to: '2020-01-01T23:59:59.999999Z' }, { from: '9999-12-31T23:59:59Z' },
+      { from: '2020-01-02T00:00:00Z', to: '2020-01-01T23:59:59.999999Z' }, { from: '9999-12-31T23:59:59Z', to: '9999-12-31T23:59:58Z' },
       { limit: 0 }, { limit: 201 }, { limit: 'x' }, { offset: -1 }, { offset: '1.0' },
     ] as Record<string, string | number>[]) {
       expectError(await ada.get(`/statement?${q(params)}`), 422, 'validation_failed');

@@ -123,6 +123,31 @@ describe('seeded created_at (W14.1)', () => {
     assert.deepEqual(holds.map((a: any) => [a.authorization_id, a.created_at]), [['a_plain', plain], ['a_old', '2021-03-04t05:06:07-08:00']]);
   });
 
+  it('orders by instant where string order disagrees (critic B5), and the first API records follow the reset strictly', async () => {
+    // Instant order: D (04:00Z) < A (04:30Z) < C (04:30:00.000001Z) < B (05:00Z); fixture order B, A, D, C.
+    const at = { B: '2020-01-01T05:00:00Z', A: '2020-01-01T10:00:00+05:30', D: '2020-01-01t04:00:00Z', C: '2020-01-01T04:30:00.000001Z' } as Record<string, string>;
+    const order = ['B', 'A', 'D', 'C'];
+    await reset(port, fixture({
+      payments: [...order.map((n) => ({ id: `p_${n}`, from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 1, created_at: at[n] })),
+        { id: 'p_reset', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 1 }],
+      authorizations: [...order.map((n) => ({ id: `a_${n}`, from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 1, expires_at: inHours(2), created_at: at[n] })),
+        { id: 'a_reset', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 1, expires_at: inHours(2) }],
+    }));
+    const ada = await login(port, 'ada');
+    const hold = (await ada.post('/authorizations', { json: { to_handle: 'bob', amount: 1 }, key: key() })).body;
+    const paid = (await ada.post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() })).body;
+    const feed = (await ada.get('/activity')).body.payments;
+    assert.deepEqual(feed.map((p: any) => p.payment_id), [paid.payment_id, 'p_reset', 'p_B', 'p_C', 'p_A', 'p_D']);
+    const holds = (await ada.get('/authorizations')).body.authorizations;
+    assert.deepEqual(holds.map((a: any) => a.authorization_id), [hold.authorization_id, 'a_reset', 'a_B', 'a_C', 'a_A', 'a_D']);
+    const resetTs = feed[1].created_at;
+    assert.equal(holds[1].created_at, resetTs);
+    assert.ok(hold.created_at > resetTs, 'the first authorization after the reset is strictly later');
+    assert.ok(paid.created_at > hold.created_at);
+    const statement = (await ada.get('/statement')).body;
+    assert.deepEqual(statement.entries.map((e: any) => e.payment.payment_id), ['p_D', 'p_A', 'p_C', 'p_B', 'p_reset', paid.payment_id]);
+  });
+
   it('keeps fixture order for equal instants', async () => {
     await reset(port, fixture({
       payments: [
@@ -303,8 +328,10 @@ describe('historical holds and closed_at (W14.6, W14.7)', () => {
     assert.deepEqual(
       Object.fromEntries(Object.values(seededAt).map((a: any) => [a.authorization_id, [a.status, a.closed_at]])),
       {
-        a_seed_open: ['open', null], a_seed_reset: ['open', null], a_seed_captured: ['captured', reset2],
-        a_seed_voided: ['voided', reset2], a_seed_expired: ['expired', reset2], a_lapsed: ['expired', '2020-07-01T00:00:00.5+01:00'],
+        // A seeded closed hold closed at its own creation (D85).
+        a_seed_open: ['open', null], a_seed_reset: ['open', null], a_seed_captured: ['captured', '2020-06-01T00:00:00Z'],
+        a_seed_voided: ['voided', '2020-06-01T00:00:00Z'], a_seed_expired: ['expired', '2020-06-01T00:00:00Z'],
+        a_lapsed: ['expired', '2020-07-01T00:00:00.5+01:00'],
       },
     );
 
@@ -374,17 +401,57 @@ describe('historical holds and closed_at (W14.6, W14.7)', () => {
     assert.deepEqual(money(await meAt(ada, { as_of: hold.expires_at })), [10_000, 0, 10_000]);
   });
 
-  it('counts a seeded open hold\'s seeded captures at their times', async () => {
+  it('counts a seeded captured_amount from creation and follows no display-only link (D84)', async () => {
     await reset(port, fixture({
-      payments: [{ id: 'p_cap', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 150, authorization_id: 'a_part', created_at: '2020-06-02T00:00:00Z' }],
+      payments: [
+        { id: 'p_link', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 150, authorization_id: 'a_part', created_at: '2020-06-02T00:00:00Z' },
+        { id: 'p_other', from_user_id: 'u_cy', to_user_id: 'u_bob', amount: 100, authorization_id: 'a_part', created_at: '2020-06-03T00:00:00Z' },
+      ],
       authorizations: [
-        { id: 'a_part', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 500, captured_amount: 200, payment_ids: ['p_cap'], expires_at: inHours(2), created_at: '2020-06-01T00:00:00Z' },
+        { id: 'a_part', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 500, captured_amount: 200, payment_ids: ['p_link', 'p_ghost'], expires_at: inHours(2), created_at: '2020-06-01T00:00:00Z' },
       ],
     }));
     const ada = await login(port, 'ada');
     assert.deepEqual(money((await ada.get('/me')).body), [10_000, 300, 9_700]);
-    // 50 of the captured 200 has no seeded payment, so it counts from the hold's creation.
-    assert.deepEqual(money(await meAt(ada, { as_of: '2020-06-01T00:00:00Z' })), [10_150, 450, 9_700]);
-    assert.deepEqual(money(await meAt(ada, { as_of: '2020-06-02T00:00:00Z' })), [10_000, 300, 9_700]);
+    assert.equal((await meAt(ada, { as_of: '2020-05-31T23:59:59.999999Z' })).held, 0);
+    assert.deepEqual(money(await meAt(ada, { as_of: '2020-06-01T00:00:00Z' })), [10_150, 300, 9_850]);
+    assert.deepEqual(money(await meAt(ada, { as_of: '2020-06-02T00:00:00Z' })), [10_000, 300, 9_700], 'the linked payment moves money only');
+    assert.deepEqual(money(await meAt(ada, { as_of: '2020-06-03T00:00:00Z' })), [10_000, 300, 9_700], 'another pair\'s link changes nothing');
+  });
+
+  it('agrees with the current view at the present (I67)', async () => {
+    await reset(port, fixture({
+      authorizations: [
+        { id: 'a_part', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 500, captured_amount: 200, expires_at: inHours(2), created_at: '2020-06-01T00:00:00Z' },
+      ],
+    }));
+    const [ada, cy] = await Promise.all(['ada', 'cy'].map((h) => login(port, h)));
+    const check = async (c: Client, latest: string) => {
+      const now = money((await c.get('/me')).body);
+      assert.deepEqual(money(await meAt(c, { as_of: latest })), now, `as_of ${latest}`);
+      assert.deepEqual(money(await meAt(c, { known_at: '9999-12-31T23:59:59Z' })), now);
+      // A minute ahead is before the next deadline (the API hold's lifetime is 600 s).
+      assert.deepEqual(money(await meAt(c, { as_of: inHours(1 / 60) })), now, 'before the next deadline');
+    };
+    const hold = (await ada.post('/authorizations', { json: { to_handle: 'cy', amount: 1_000 }, key: key() })).body;
+    await check(ada, hold.created_at);
+    const capture = (await cy.post(`/authorizations/${hold.authorization_id}/capture`, { json: { amount: 250, final: false }, key: key() })).body;
+    await check(ada, capture.created_at);
+    await check(cy, capture.created_at);
+    assert.deepEqual(money((await ada.get('/me')).body), [9_750, 300 + 750, 9_750 - 1_050]);
+  });
+
+  it('is exact at microsecond hold boundaries (critic B1)', async () => {
+    await reset(port, fixture({
+      authorizations: [
+        { id: 'a_micro', from_user_id: 'u_ada', to_user_id: 'u_bob', amount: 70, created_at: '2020-06-01T05:30:00.123456+05:30', expires_at: '2020-06-02T00:00:00.654321Z' },
+      ],
+    }));
+    const ada = await login(port, 'ada');
+    const held = async (asOf: string) => (await meAt(ada, { as_of: asOf })).held;
+    assert.deepEqual(await Promise.all([
+      held('2020-06-01T00:00:00.123455Z'), held('2020-06-01T00:00:00.123456Z'),
+      held('2020-06-02T00:00:00.65432Z'), held('2020-06-02T05:30:00.654321+05:30'),
+    ]), [0, 70, 70, 0]);
   });
 });

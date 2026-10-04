@@ -86,9 +86,12 @@ describe('GET /_test/export, schema 2 (W8.1)', () => {
     assert.deepEqual([...byId.keys()], ['a_seed_open', 'a_seed_exp', 'a_seed_lapsed', w.open.authorization_id,
       w.partial.authorization_id, w.done.authorization_id, w.voided.authorization_id]);
     for (const a of s.authorizations) {
-      assert.deepEqual(Object.keys(a).sort(), ['amount', 'captured_amount', 'closed_at', 'created_at', 'expires_at',
-        'from_user_id', 'id', 'note', 'payment_id', 'payment_ids', 'seeded_closed', 'seq', 'status', 'to_user_id', 'visibility']);
-      assert.equal(a.seeded_closed, a.id === 'a_seed_exp', 'only the hold seeded closed (schema 3)');
+      assert.deepEqual(Object.keys(a).sort(), ['amount', 'base_captured_amount', 'capture_payment_ids', 'captured_amount',
+        'closed_at', 'created_at', 'expires_at', 'from_user_id', 'id', 'note', 'payment_id', 'payment_ids', 'seq', 'status',
+        'to_user_id', 'visibility']);
+      // Schema 3 (D84): a seeded captured amount is the base; API captures are listed apart.
+      assert.equal(a.base_captured_amount, 0);
+      assert.deepEqual(a.capture_payment_ids, a.payment_ids);
       assert.match(a.created_at, TS_RE);
     }
     const lapsed: any = byId.get('a_seed_lapsed');

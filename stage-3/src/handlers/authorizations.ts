@@ -54,8 +54,8 @@ export function createAuthorization(ctx: Ctx): Result {
       paymentIds: [],
       createdAt,
       closedAt: null,
-      seededClosed: false,
       baseCaptured: 0,
+      captureIds: [],
       seq: nextSeq(st),
     });
     return authorizationView(st, authorization, now.ms);
@@ -109,6 +109,7 @@ export function captureAuthorization(ctx: Ctx): Result {
     });
     authorization.capturedAmount += take;
     authorization.paymentIds.push(payment.id);
+    authorization.captureIds.push(payment.id);
     authorization.paymentId = payment.id;
     if (final || authorization.capturedAmount === authorization.amount) {
       closeAuthorization(st, authorization, 'captured', ts);

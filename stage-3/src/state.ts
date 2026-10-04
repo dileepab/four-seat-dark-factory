@@ -129,11 +129,12 @@ export interface Authorization {
   createdKey: string;
   closedAt: string | null; // when a void or a capture closed it; null while open and for clock expiry
   closedKey: string | null; // its exact instant
-  // Seeded as captured, voided or expired: it holds nothing at any instant (plan 3.8, D71).
-  seededClosed: boolean;
-  // Captured before its history starts (a seeded captured_amount without capture payments):
-  // counted from creation. Captures made through the API are payments (capturesOf).
+  // The captures that count in its history (plan 3.8, D84): the base, counted from creation
+  // (a seeded hold's captured_amount; 0 for one made through the API), and the payments made
+  // by its capture endpoint, in order. `paymentIds` and a payment's `authorizationId` are
+  // display-only and count nothing.
   baseCaptured: number;
+  captureIds: string[];
   seq: number;
 }
 
@@ -184,7 +185,6 @@ export interface State {
   operators: Set<string>;
   idem: Map<string, IdemRecord>; // see idempotency.ts for the map key
   paymentsOf: Map<string, Payment[]>; // user id -> the payments they sent or received
-  capturesOf: Map<string, Payment[]>; // authorization id -> the payments linked to it
   authorizationsOf: Map<string, Authorization[]>; // payer id -> their authorizations
   snapshots: Map<string, Snapshot>; // statement token -> its frozen view
   seq: number; // creation counter, the tie-break for equal timestamps
@@ -212,7 +212,6 @@ export function emptyState(): State {
     operators: new Set(),
     idem: new Map(),
     paymentsOf: new Map(),
-    capturesOf: new Map(),
     authorizationsOf: new Map(),
     snapshots: new Map(),
     seq: 0,
@@ -299,7 +298,6 @@ export function addPayment(st: State, input: NewPayment): Payment {
   st.paymentsById.set(payment.id, payment);
   indexed(st.paymentsOf, payment.fromUserId).push(payment);
   if (payment.toUserId !== payment.fromUserId) indexed(st.paymentsOf, payment.toUserId).push(payment);
-  if (payment.authorizationId !== null) indexed(st.capturesOf, payment.authorizationId).push(payment);
   return payment;
 }
 

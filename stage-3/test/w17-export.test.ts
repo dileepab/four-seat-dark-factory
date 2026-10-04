@@ -35,15 +35,23 @@ const importInto = (p: number, body: unknown) => request(p, 'POST', '/_test/impo
 const as = (c: Client, p: number) => new Client(p, c.token);
 const correct = (c: Client, id: string, json: unknown, k = key()) => c.post(`/payments/${id}/corrections`, { json, key: k });
 
+const FORMS = ['2020-03-01T00:00:00Z', '2020-03-01T00:00:01z', '2020-03-01t00:00:02Z', '2020-03-01T05:30:03+05:30',
+  '2020-03-01T00:00:04-00:00', '2020-03-01T00:00:04.000001Z', '2020-03-01T00:00:05.123456789+00:00'];
+
 // A stage-3 history: seeded past payments and holds, payments, a request, a settlement, holds
 // and captures, corrections and statements with snapshots.
 async function populate() {
   await reset(port, fixture({
     settlement_operator_ids: ['u_ada'],
-    payments: [{ id: 'p_seed', from_user_id: 'u_bob', to_user_id: 'u_ada', amount: 300, created_at: '2020-01-01T00:00:00.5+02:00' }],
+    payments: [
+      { id: 'p_seed', from_user_id: 'u_bob', to_user_id: 'u_ada', amount: 300, created_at: '2020-01-01T00:00:00.5+02:00' },
+      // Every accepted instant form (W17.2, D86); zero amounts keep the balances simple.
+      ...FORMS.map((created_at, i) => ({ id: `p_form${i}`, from_user_id: 'u_cy', to_user_id: 'u_ada', amount: 0, created_at })),
+    ],
     authorizations: [
-      { id: 'a_seed', from_user_id: 'u_ada', to_user_id: 'u_cy', amount: 200, expires_at: inHours(2), created_at: '2020-02-01T00:00:00Z' },
+      { id: 'a_seed', from_user_id: 'u_ada', to_user_id: 'u_cy', amount: 200, captured_amount: 50, payment_ids: ['p_seed'], expires_at: inHours(2), created_at: '2020-02-01T00:00:00Z' },
       { id: 'a_seed_voided', from_user_id: 'u_ada', to_user_id: 'u_cy', amount: 900, status: 'voided', expires_at: inHours(2), created_at: '2020-02-01T00:00:00Z' },
+      ...FORMS.map((created_at, i) => ({ id: `a_form${i}`, from_user_id: 'u_cy', to_user_id: 'u_bob', amount: 1, expires_at: '2020-12-31T23:59:59.999999-00:00', created_at })),
     ],
   }));
   const [ada, bob, cy] = await Promise.all(['ada', 'bob', 'cy'].map((h) => login(port, h)));
@@ -52,13 +60,13 @@ async function populate() {
   await ada.post(`/requests/${ask.request_id}/pay`, { json: {}, key: key() });
   await ada.post('/settlements', { json: { transfers: [{ from_handle: 'bob', to_handle: 'cy', amount: 25 }] }, key: key() });
   const hold = (await ada.post('/authorizations', { json: { to_handle: 'bob', amount: 500 }, key: key() })).body;
-  await bob.post(`/authorizations/${hold.authorization_id}/capture`, { json: { amount: 120, final: false }, key: key() });
+  const capture = (await bob.post(`/authorizations/${hold.authorization_id}/capture`, { json: { amount: 120, final: false }, key: key() })).body;
   const snapBefore = (await ada.get('/statement?limit=2')).body;
   const fixKey = key();
   const fixBody = { expected_revision: 1, amount: 600, effective_at: '2020-06-01T00:00:00Z', reason: 'backdated' };
   const fix = (await correct(ada, paid.payment_id, fixBody, fixKey)).body;
   const snapAfter = (await ada.get(`/statement?known_at=${encodeURIComponent(fix.recorded_at)}&limit=3`)).body;
-  return { ada, bob, cy, paid, hold, fix, fixKey, fixBody, snapBefore, snapAfter };
+  return { ada, bob, cy, paid, hold, capture, fix, fixKey, fixBody, snapBefore, snapAfter };
 }
 
 // Everything a reader can see of the history, for comparing two services.
@@ -67,6 +75,8 @@ async function history(clients: Client[], w: Awaited<ReturnType<typeof populate>
     me: (await c.get('/me')).body,
     early: (await c.get('/me?as_of=2019-01-01T00:00:00Z')).body,
     mid: (await c.get('/me?as_of=2020-03-01T00:00:00Z')).body,
+    forms: await Promise.all(FORMS.map(async (f) => (await c.get(`/me?as_of=${encodeURIComponent(f)}`)).body.held)),
+    feed: (await c.get('/activity?limit=200')).body,
     known: (await c.get(`/me?known_at=${encodeURIComponent(microBefore(w.fix.recorded_at))}`)).body,
     statement: (({ snapshot, ...rest }) => rest)((await c.get('/statement?limit=200')).body),
     authorizations: (await c.get('/authorizations?limit=200')).body,
@@ -75,7 +85,7 @@ async function history(clients: Client[], w: Awaited<ReturnType<typeof populate>
 }
 
 describe('export schema 3 (W17.1)', () => {
-  it('carries revisions, opening balances, snapshots, seeded_closed and correction keys', async () => {
+  it('carries revisions, opening balances, snapshots, base and API captures, and correction keys', async () => {
     const w = await populate();
     const { state: s } = await exportFrom(port);
     assert.equal(s.schema, 3);
@@ -93,8 +103,10 @@ describe('export schema 3 (W17.1)', () => {
     const after = s.snapshots.find((x: any) => x.token === w.snapAfter.snapshot);
     assert.deepEqual([after.owner_id, after.from, after.known_at], ['u_ada', null, w.fix.recorded_at]);
     assert.ok(after.cutoff <= s.seq && Date.parse(after.to) > Date.parse(w.fix.recorded_at), 'the defaulted to');
-    assert.deepEqual(s.authorizations.map((a: any) => [a.id, a.seeded_closed]),
-      [['a_seed', false], ['a_seed_voided', true], [w.hold.authorization_id, false]]);
+    const holds = Object.fromEntries(s.authorizations.map((a: any) => [a.id, [a.base_captured_amount, a.capture_payment_ids, a.closed_at]]));
+    assert.deepEqual(holds.a_seed, [50, [], null], 'a seeded captured_amount is the base; its payment_ids count nothing');
+    assert.deepEqual(holds.a_seed_voided, [0, [], '2020-02-01T00:00:00Z'], 'closed at its own creation (D85)');
+    assert.deepEqual(holds[w.hold.authorization_id], [0, [w.capture.payment_id], null]);
     assert.ok(s.idempotency.some((r: any) => r.path === `/payments/${w.paid.payment_id}/corrections` && r.key === w.fixKey));
   });
 });
@@ -104,8 +116,9 @@ describe('schema-3 round trip (W17.2)', () => {
     const w = await populate();
     const clients = [w.ada, w.bob, w.cy];
     const before = await history(clients, w);
-    // The seeded voided hold, created before the reset, holds nothing at any instant.
-    assert.equal(before[0].mid.held, 200);
+    // At 2020-03-01 ada holds a_seed's 150 (200 less its seeded 50); the seeded voided hold never.
+    assert.equal(before[0].mid.held, 150);
+    assert.deepEqual(before[2].forms, [1, 2, 3, 4, 5, 6, 7], 'cy\'s holds count from each exact seeded instant');
     const snapshot = await exportFrom(port);
     for (const target of [port, second.port]) {
       if (target === port) await reset(port, fixture());
@@ -142,13 +155,29 @@ describe('the clock after a schema-3 import', () => {
     const next = await correct(as(w.ada, second.port), w.paid.payment_id, { ...w.fixBody, expected_revision: 2, amount: 610 });
     assert.equal(next.status, 201, next.text);
     assert.ok(next.body.recorded_at > LATER, next.body.recorded_at);
+    // An effective time beyond everything else moves the clock too (D86).
+    const EFFECTIVE = '2099-06-01T00:00:00.000+00:00';
+    const ahead = {
+      ...exported.state,
+      payments: exported.state.payments.map((p: any) => (p.id !== w.paid.payment_id ? p
+        : { ...p, revisions: [p.revisions[0], { ...p.revisions[1], effective_at: EFFECTIVE }] })),
+    };
+    assert.equal((await importInto(second.port, { ...exported, state: ahead })).status, 204);
+    const paid = (await as(w.ada, second.port).post('/payments', { json: { to_handle: 'bob', amount: 1 }, key: key() })).body;
+    assert.ok(paid.created_at > EFFECTIVE, paid.created_at);
   });
 });
 
 describe('upgrade from the frozen builds (W17.3)', () => {
   it('lifts a stage-2 export: revision 1, openings, hold history and closed_at, verbatim replays', async () => {
     const p = stageTwo.port;
-    await reset(p, fixture({ settlement_operator_ids: ['u_ada'] }));
+    await reset(p, fixture({
+      settlement_operator_ids: ['u_ada'],
+      // A seeded partly captured hold, and a seeded payment that claims to be its capture (D84).
+      payments: [{ id: 'p_link', from_user_id: 'u_bob', to_user_id: 'u_ada', amount: 80, authorization_id: 'a_part' }],
+      authorizations: [{ id: 'a_part', from_user_id: 'u_bob', to_user_id: 'u_ada', amount: 500, captured_amount: 200,
+        payment_ids: ['p_link'], expires_at: inHours(2) }],
+    }));
     const [ada, bob, cy] = await Promise.all(['ada', 'bob', 'cy'].map((h) => login(p, h)));
     const payKey = key();
     const payBody = { to_handle: 'bob', amount: 700 };
@@ -171,12 +200,33 @@ describe('upgrade from the frozen builds (W17.3)', () => {
     const voided = exported.state.authorizations.find((a: any) => a.id === voidable.authorization_id);
     assert.match(voided.closed_at, /^\d{4}-/);
 
+    // API captures beyond a hold's captured_amount: 422 with nothing changed (D84).
+    const before = await exportFrom(port);
+    const shrunk = { ...exported, state: { ...exported.state, authorizations: exported.state.authorizations.map((a: any) =>
+      (a.id === hold.authorization_id ? { ...a, captured_amount: 99 } : a)) } };
+    expectError(await importInto(port, shrunk), 422, 'validation_failed');
+    assert.deepEqual(await exportFrom(port), before);
+
     assert.equal((await importInto(port, exported)).status, 204);
     const [a3, b3, c3] = [ada, bob, cy].map((c) => as(c, port));
+    // The seeded base counts from creation and the claimed link nothing; the present view
+    // agrees with the current one for every imported hold (I67).
+    const lifted = (await exportFrom(port)).state.authorizations;
+    assert.deepEqual(lifted.map((a: any) => [a.id, a.base_captured_amount, a.capture_payment_ids]),
+      [['a_part', 200, []], [hold.authorization_id, 0, [capture.payment_id]], [voidable.authorization_id, 0, []]]);
+    for (const c of [a3, b3, c3]) {
+      const current = (await c.get('/me')).body;
+      for (const params of [`as_of=${encodeURIComponent(exported.state.last_ts)}`, 'known_at=9999-01-01T00:00:00Z']) {
+        const view = (await c.get(`/me?${params}`)).body;
+        assert.deepEqual([view.total, view.held, view.available], [current.total, current.held, current.available], params);
+      }
+    }
+    assert.equal((await b3.get('/me')).body.held, 300);
     const me = (await a3.get('/me')).body;
     assert.deepEqual([me.total, me.held], [10_000 - 700 - 100, 300]);
-    assert.deepEqual((await a3.get('/me?as_of=2000-01-01T00:00:00Z')).body.total, 10_000, 'the opening balance');
-    assert.deepEqual((await b3.get('/me?as_of=2000-01-01T00:00:00Z')).body.total, 2_500);
+    // The opening is the imported balance less every payment, the seeded one included (D69).
+    assert.deepEqual((await a3.get('/me?as_of=2000-01-01T00:00:00Z')).body.total, 10_000 - 80, 'the opening balance');
+    assert.deepEqual((await b3.get('/me?as_of=2000-01-01T00:00:00Z')).body.total, 2_500 + 80);
     for (const c of [a3, b3, c3]) assert.deepEqual((await c.get(`/me?as_of=${encodeURIComponent(exported.state.last_ts)}`)).body.total, (await c.get('/me')).body.total);
     assert.deepEqual((await a3.get(`/payments/${payment.payment_id}/revisions`)).body.revisions, [{
       payment_id: payment.payment_id, revision: 1, amount: 700, effective_at: payment.created_at, recorded_at: payment.created_at, reason: '',
@@ -189,7 +239,7 @@ describe('upgrade from the frozen builds (W17.3)', () => {
     assert.equal((await a3.get(`/me?as_of=${encodeURIComponent(microBefore(voided.closed_at))}`)).body.held, 600);
     assert.equal((await a3.get(`/me?as_of=${encodeURIComponent(voided.closed_at)}`)).body.held, 300);
     const listed = Object.fromEntries((await a3.get('/authorizations')).body.authorizations.map((a: any) => [a.authorization_id, a.closed_at]));
-    assert.deepEqual(listed, { [hold.authorization_id]: null, [voidable.authorization_id]: voided.closed_at });
+    assert.deepEqual(listed, { [hold.authorization_id]: null, [voidable.authorization_id]: voided.closed_at, a_part: null });
     // Stored stage-2 bodies replay verbatim, without closed_at.
     const replayHold = await a3.post('/authorizations', { json: { to_handle: 'cy', amount: 400 }, key: holdKey });
     assert.deepEqual([replayHold.status, replayHold.body], [200, hold]);
@@ -238,6 +288,7 @@ describe('invalid schema-3 states (W17.4)', () => {
     const [r1, r2] = s.payments[i].revisions;
     const users = (patch: (u: any) => any) => ({ ...exported, state: { ...s, users: s.users.map((u: any) => (u.id === 'u_ada' ? patch(u) : u)) } });
     const snaps = (list: any[]) => ({ ...exported, state: { ...s, snapshots: list } });
+    const holdPatch = (patch: (a: any) => any) => ({ ...exported, state: { ...s, authorizations: s.authorizations.map((a: any) => (a.id === w.hold.authorization_id ? patch(a) : a)) } });
     const bad: [string, unknown][] = [
       ['schema 4', { ...exported, state: { ...s, schema: 4 } }],
       ['revision gap', withPayment((p) => ({ ...p, revisions: [r1, { ...r2, revision: 3 }] }))],
@@ -259,7 +310,12 @@ describe('invalid schema-3 states (W17.4)', () => {
       ['snapshot cutoff beyond seq', snaps([{ ...s.snapshots[0], cutoff: s.seq + 1 }])],
       ['snapshot to not an instant', snaps([{ ...s.snapshots[0], to: null }])],
       ['snapshots missing', { ...exported, state: { ...s, snapshots: undefined } }],
-      ['seeded_closed not a boolean', { ...exported, state: { ...s, authorizations: s.authorizations.map((a: any) => ({ ...a, seeded_closed: 'yes' })) } }],
+      ['base above captured', holdPatch((a) => ({ ...a, base_captured_amount: a.captured_amount + 1 }))],
+      ['base and captures not adding up', holdPatch((a) => ({ ...a, base_captured_amount: 1 }))],
+      ['capture of an unknown payment', holdPatch((a) => ({ ...a, capture_payment_ids: ['p_ghost'] }))],
+      ['capture repeated', holdPatch((a) => ({ ...a, capture_payment_ids: [...a.capture_payment_ids, ...a.capture_payment_ids] }))],
+      ['captures missing', holdPatch(({ capture_payment_ids, ...a }) => a)],
+      ['closed_at not an instant', holdPatch((a) => ({ ...a, closed_at: '2020-01-01' }))],
     ];
     for (const [name, body] of bad) {
       const reply = await importInto(port, body);

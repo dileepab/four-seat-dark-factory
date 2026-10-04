@@ -3,6 +3,11 @@
 
 import type { Authorization, Payment, Revision, State, User } from './state.ts';
 
+// The payments made by the authorization's capture endpoint (D84).
+function capturesOf(st: State, a: Authorization): Payment[] {
+  return a.captureIds.map((id) => st.paymentsById.get(id)!);
+}
+
 export interface View {
   T: string; // effective-time limit, an instant key, inclusive
   K: string | null; // known-at limit, an instant key, inclusive; null applies no time test
@@ -34,13 +39,14 @@ export function totalIn(st: State, user: User, view: View): number {
   return total;
 }
 
-// What one of the user's outgoing authorizations holds in the view (plan 3.8).
+// What one of the user's outgoing authorizations holds in the view (plan 3.8): its amount less
+// its base captured amount and the API captures known by then, until it closes or expires. A
+// hold seeded closed closed at its own creation, so it never holds anything (D84, D85).
 export function holdIn(st: State, a: Authorization, view: View): number {
-  if (a.seededClosed) return 0;
   const known = (key: string) => key <= view.T && (view.K === null || key <= view.K);
   if (a.seq > view.C || !known(a.createdKey)) return 0;
   let captured = a.baseCaptured;
-  for (const p of st.capturesOf.get(a.id) ?? []) {
+  for (const p of capturesOf(st, a)) {
     if (p.seq <= view.C && known(p.createdKey)) captured += p.amount;
   }
   if (a.closedKey !== null && known(a.closedKey)) return 0;
@@ -70,8 +76,7 @@ export function historyStaysCovered(
   // A hold changes only at its creation, its captures, its close and its deadline: record the
   // change in what it holds at each of those instants.
   for (const a of st.authorizationsOf.get(user.id) ?? []) {
-    if (a.seededClosed) continue;
-    const points = [a.createdKey, a.expiresKey, ...(st.capturesOf.get(a.id) ?? []).map((p) => p.createdKey)];
+    const points = [a.createdKey, a.expiresKey, ...capturesOf(st, a).map((p) => p.createdKey)];
     if (a.closedKey !== null) points.push(a.closedKey);
     let previous = 0;
     for (const key of new Set(points.sort())) {

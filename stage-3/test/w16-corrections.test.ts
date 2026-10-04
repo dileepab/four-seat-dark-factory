@@ -52,6 +52,10 @@ describe('a correction (W16.1, W16.7, W16.10)', () => {
     const down = await correct(ada, p.payment_id, { expected_revision: 2, amount: 0, effective_at: effective, reason: 'refund all' });
     assert.equal(down.status, 201, down.text);
     assert.deepEqual(await totals(), [10_000, 2_500, 500], 'amount 0 reverses the payment');
+    // Still one statement entry, with the new revision's zero (critic B4).
+    const zero = (await ada.get('/statement')).body.entries;
+    assert.deepEqual(zero.map((e: any) => [e.payment.payment_id, e.payment.amount, e.delta, e.revision, e.balance_after]),
+      [[p.payment_id, 0, 0, 3, 10_000]]);
     const moved = await correct(ada, p.payment_id, { expected_revision: 3, amount: 0, effective_at: '2020-01-01T00:00:00Z', reason: 'when' });
     assert.equal(moved.status, 201, moved.text);
     assert.deepEqual(await totals(), [10_000, 2_500, 500], 'an unchanged amount moves nothing now');

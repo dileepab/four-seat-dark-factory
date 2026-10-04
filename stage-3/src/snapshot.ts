@@ -21,8 +21,8 @@ export const TRACK = 'pocketful';
 export const FORMAT_VERSION = 1;
 // The state layout (D52, D76): 1 is stage 1's (no authorizations), 2 adds the TTL, every
 // authorization and each payment's authorization_id, 3 adds every payment's revisions, each
-// user's opening balance, whether a seeded hold was seeded closed, and the statement
-// snapshots. Import reads all three.
+// user's opening balance, each authorization's base captured amount and capture payments
+// (D84), and the statement snapshots. Import reads all three.
 const SCHEMA = 3;
 const MAX_REASON = 200;
 const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00$/;
@@ -74,7 +74,8 @@ export function exportState(st: State): JsonObject {
         id: a.id, from_user_id: a.fromUserId, to_user_id: a.toUserId, amount: a.amount,
         captured_amount: a.capturedAmount, note: a.note, visibility: a.visibility, status: a.status,
         expires_at: a.expiresAt, payment_id: a.paymentId, payment_ids: [...a.paymentIds],
-        created_at: a.createdAt, closed_at: a.closedAt, seeded_closed: a.seededClosed, seq: a.seq,
+        created_at: a.createdAt, closed_at: a.closedAt, seq: a.seq,
+        base_captured_amount: a.baseCaptured, capture_payment_ids: [...a.captureIds],
       })),
       operator_ids: [...st.operators],
       snapshots: [...st.snapshots.values()].map((x) => ({
@@ -155,6 +156,7 @@ function revisionsOf(p: JsonObject, what: string, see: (seq: unknown, ts: string
       check((recKey as string) > out[j - 1].recKey, `${w}.recorded_at must be later than the revision before`);
     }
     see(o.seq, o.recorded_at as string, w);
+    see(o.seq, o.effective_at as string, w);
     out.push({
       revision: j + 1, amount: o.amount as number, effectiveAt: o.effective_at as string, effKey: effKey as string,
       recordedAt: o.recorded_at as string, recKey: recKey as string, reason: o.reason as string, seq: o.seq as number,
@@ -316,8 +318,22 @@ export function importState(body: JsonObject): State {
       check(Array.isArray(a.payment_ids) && (a.payment_ids as unknown[]).every((id) => typeof id === 'string'),
         `${what}.payment_ids must be an array of strings`);
       check(isInstant(a.created_at), `${what}.created_at must be an instant`);
-      check(a.closed_at === null || isTs(a.closed_at), `${what}.closed_at must be a timestamp or null`);
-      check(a.seeded_closed === undefined || typeof a.seeded_closed === 'boolean', `${what}.seeded_closed must be a boolean`);
+      check(a.closed_at === null || isInstant(a.closed_at), `${what}.closed_at must be an instant or null`);
+      let base = 0;
+      const captureIds: string[] = [];
+      if (v3) {
+        check(isInt(a.base_captured_amount, 0, a.captured_amount as number), `${what}.base_captured_amount must be an integer from 0 to captured_amount`);
+        base = a.base_captured_amount as number;
+        check(Array.isArray(a.capture_payment_ids) && (a.capture_payment_ids as unknown[]).every((id) => typeof id === 'string'
+          && st.paymentsById.has(id)), `${what}.capture_payment_ids must name payments`);
+        let captured = base;
+        for (const id of a.capture_payment_ids as string[]) {
+          check(!captureIds.includes(id), `${what}.capture_payment_ids repeats ${id}`);
+          captureIds.push(id);
+          captured += st.paymentsById.get(id)!.amount;
+        }
+        check(captured === a.captured_amount, `${what}: base_captured_amount and the capture payments must add up to captured_amount`);
+      }
       see(a.seq, a.created_at as string, what);
       if (a.closed_at !== null) see(a.seq, a.closed_at as string, what);
       addAuthorization(st, {
@@ -327,7 +343,7 @@ export function importState(body: JsonObject): State {
         expiresAt: a.expires_at as string, expiresMs: expiresMs as number,
         paymentId: a.payment_id as string | null, paymentIds: [...(a.payment_ids as string[])],
         createdAt: a.created_at as string, closedAt: a.closed_at as string | null,
-        seededClosed: a.seeded_closed === true, baseCaptured: 0, seq: a.seq as number,
+        baseCaptured: base, captureIds, seq: a.seq as number,
       });
     });
   }
@@ -388,9 +404,24 @@ export function importState(body: JsonObject): State {
     if (v3) check(user.opening + net === user.balance, `${user.id}: opening_balance and the latest revisions do not add up to balance`);
     else user.opening = user.balance - net;
   }
-  for (const a of st.authorizations) {
-    const linked = (st.capturesOf.get(a.id) ?? []).reduce((sum, p) => sum + p.amount, 0);
-    a.baseCaptured = Math.max(0, a.capturedAmount - linked);
+  // A schema-2 authorization's API captures are the payments its capture endpoint's stored
+  // idempotency records answered with; the rest of its captured_amount is its base (D84).
+  if (!v3) {
+    const captures = new Map<string, Set<string>>();
+    for (const r of st.idem.values()) {
+      const m = r.method === 'POST' ? /^\/authorizations\/(.+)\/capture$/.exec(r.path) : null;
+      const paymentId = isObject(r.response) ? r.response.payment_id : undefined;
+      if (m === null || typeof paymentId !== 'string' || !st.authorizationsById.has(m[1]) || !st.paymentsById.has(paymentId)) continue;
+      if (!captures.has(m[1])) captures.set(m[1], new Set());
+      captures.get(m[1])!.add(paymentId);
+    }
+    for (const [id, paymentIds] of captures) {
+      const a = st.authorizationsById.get(id)!;
+      a.captureIds = [...paymentIds].sort((x, y) => st.paymentsById.get(x)!.seq - st.paymentsById.get(y)!.seq);
+      a.baseCaptured = a.capturedAmount - a.captureIds.reduce((sum, p) => sum + st.paymentsById.get(p)!.amount, 0);
+      check(a.baseCaptured >= 0, `authorization ${id}: its capture payments exceed its captured_amount`);
+    }
+    for (const a of st.authorizations) if (!captures.has(a.id)) a.baseCaptured = a.capturedAmount;
   }
   sortByTime(st);
 

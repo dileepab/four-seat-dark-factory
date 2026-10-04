@@ -39,7 +39,9 @@ export function statement(ctx: Ctx): Result {
     const now = clock(st);
     const toText = to?.text ?? formatTs(now.ms + 1);
     const toKey = to?.key ?? msKey(now.ms + 1);
-    if (from !== null && from.key > toKey) throw invalid('from must not be later than to');
+    // Only two given bounds can contradict; a later `from` with `to` omitted is an empty window
+    // whose balances are both the balance at the read (D72).
+    if (from !== null && to !== null && from.key > to.key) throw invalid('from must not be later than to');
     snapshot = {
       token: newId('ss', (id) => st.snapshots.has(id)),
       ownerId: caller.id,

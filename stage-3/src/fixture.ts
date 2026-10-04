@@ -288,24 +288,20 @@ export async function buildState(fixture: Fixture, resetMs: number): Promise<Sta
     });
   });
   // Seeded records take their supplied created_at, else the reset's time; fixture order is
-  // creation order (D15). A seeded authorization that is already closed closed at the reset's
-  // time and holds nothing at any instant (D71); an open one past its deadline reads expired.
+  // creation order (D15). A seeded authorization that is already closed closed at its own
+  // creation, so it holds nothing at any instant (D85); an open one past its deadline reads
+  // expired. A seeded captured_amount counts from creation, and seeded links count nothing (D84).
   const ts = st.lastTs;
-  const linked = new Map<string, number>(); // authorization id -> seeded payments linked to it
   for (const p of fixture.payments) {
     addPayment(st, { ...p, createdAt: p.createdAt ?? ts, seq: nextSeq(st) });
-    if (p.authorizationId !== null) linked.set(p.authorizationId, (linked.get(p.authorizationId) ?? 0) + p.amount);
   }
   for (const r of fixture.requests) {
     addRequest(st, { ...r, createdAt: ts, seq: nextSeq(st) });
   }
   for (const a of fixture.authorizations) {
     addAuthorization(st, {
-      ...a, createdAt: a.createdAt ?? ts, closedAt: a.status === 'open' ? null : ts,
-      seededClosed: a.status !== 'open',
-      // A seeded captured amount not matched by seeded capture payments counts from creation.
-      baseCaptured: Math.max(0, a.capturedAmount - (linked.get(a.id) ?? 0)),
-      seq: nextSeq(st),
+      ...a, createdAt: a.createdAt ?? ts, closedAt: a.status === 'open' ? null : a.createdAt ?? ts,
+      baseCaptured: a.capturedAmount, captureIds: [], seq: nextSeq(st),
     });
   }
   for (const id of fixture.operators) st.operators.add(id);
