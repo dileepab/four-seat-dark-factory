@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from support import (assert_newest_first, check_payment, check_request, expect, expect_error,
+from support import (TWO_53, assert_newest_first, check_payment, check_request, expect, expect_error,
                      fixture, new_key, standard_users, user)
 
 pytestmark = pytest.mark.item(3)
@@ -205,6 +205,33 @@ def test_pay_replay_is_200_never_409(world):
     assert expect(world.ada.pay_request(rq, key=key), 200) == p
     expect_error(world.ada.pay_request(rq), 409, "request_not_pending")
     assert world.ada.balance() == 9_995
+
+
+# ---------------------------------------------------------------- 2^53 guard on pay (D19, I9)
+
+def test_paying_a_request_past_2_53_is_422_and_changes_nothing(svc):
+    svc.must_reset(fixture([user("ada", 1_000), user("bob", TWO_53 - 10)]))
+    ada, bob = svc.client("ada"), svc.client("bob")
+    rq = expect(bob.ask("ada", 11), 201)["request_id"]
+    key = new_key()
+    expect_error(ada.pay_request(rq, {}, key=key), 422, "validation_failed")
+    assert ada.balance() == 1_000 and bob.balance() == TWO_53 - 10
+    after = find(ada.requests(), rq)
+    assert after["status"] == "pending" and after["payment_id"] is None
+    for c in (ada, bob):
+        assert not [p for p in c.feed() if p["request_id"] == rq]
+    # The refused key was not claimed: once bob can take 11 more, the same key is a first use.
+    expect(bob.pay("ada", 5), 201)
+    p = expect(ada.pay_request(rq, {}, key=key), 201)
+    assert p["request_id"] == rq and bob.balance() == TWO_53 - 4
+
+
+def test_paying_a_request_up_to_exactly_2_53_is_allowed(svc):
+    svc.must_reset(fixture([user("ada", 1_000), user("bob", TWO_53 - 10)]))
+    ada, bob = svc.client("ada"), svc.client("bob")
+    rq = expect(bob.ask("ada", 10), 201)["request_id"]
+    expect(ada.pay_request(rq, {}), 201)
+    assert bob.balance() == TWO_53 and ada.balance() == 990
 
 
 # ---------------------------------------------------------------- seeded requests
