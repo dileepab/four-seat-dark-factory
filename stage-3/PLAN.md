@@ -9,10 +9,10 @@ Frozen references: `stage-1/` (accepted at 4baf8d9) and `stage-2/` (accepted at 
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | BUILDING (handed off at e98c86a; the critic's plan review changes 3.8 and 3.11 under it: D84 captures that count, D85 seeded closed holds, D86 imported instants, I67; a new W14 commit follows, and the verdict is on that one) | e98c86a |
-| W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | PLANNED | — |
-| W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | PLANNED | — |
-| W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | PLANNED | — |
+| W14 | builder | Balance history: instants, seeded times, revision 1 for every payment, opening balances, `GET /me` with `as_of` and `known_at`, historical holds, `closed_at` | BUILDING (first handed off at e98c86a, superseded; the plan revision f745388 is built into 0acff74; one HANDOFF of W14 to W17 follows its gate, D87) | 0acff74 |
+| W15 | builder | Statements: `GET /statement`, windows, pages and snapshots | BUILDING (1268dd8, revised in 0acff74; handed off with W14, D87) | 0acff74 |
+| W16 | builder | Corrections: `POST /payments/{id}/corrections`, `GET /payments/{id}/revisions`, historical overdraft | BUILDING (951904d, revised in 0acff74; handed off with W14, D87) | 0acff74 |
+| W17 | builder | Export schema 3; import of stage-1, stage-2 and stage-3 exports; RUN.md | BUILDING (f80fc0d, revised in 0acff74; handed off with W14, D87) | 0acff74 |
 | W18 | verifier | Stage-3 acceptance suite: stage-1 and stage-2 regression, history, statements, corrections, upgrade | BUILDING (W14-W16 tests drafted; first commit after a draft run, before the W14 verdict) | — |
 
 Item numbers continue from stage 2 (W1–W13). States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
@@ -272,6 +272,7 @@ Stages 1 and 2's decisions D1–D65 stand. New:
 - **D85 Seeded closed holds close at creation (critic plan review 2).** A hold seeded as `captured`, `voided` or `expired` gets `closed_at` = its own `created_at` (the supplied one, else the reset's timestamp, which is what stage 2 recorded). Then the general rules of section 3.8 make it hold nothing at any instant with no extra marker, and an export and import cannot change its history.
 - **D86 Imported instants (critic plan review 3).** A schema-3 state accepts every instant form a reset accepts, and every comparison during import is by exact instant. Stage 2's import accepted only its own timestamp form and took the clock base as a string maximum; string order is not instant order once offsets, lowercase `t` or longer fractions appear, and a reset seeding them would otherwise produce an export the service refuses, against §10.
 - **D83 Non-senders are 403.** "An authenticated non-sender gets 403 `forbidden`", third parties included, although `GET /payments/{id}/revisions` answers them 404 as the specification also states.
+- **D87 One handoff for W14 to W17.** The builder had committed W15 (1268dd8), W16 (951904d) and W17 (f80fc0d) on top of W14 when the plan revision f745388 changed code under all four; the revision landed as one commit, 0acff74. A verdict covers every earlier item, so one HANDOFF of W14 to W17 at that commit is verdicted as W17: everything counts (no expected failures among the supplied checks for stages 1 to 3; the browser tests at 375 and 1280 px). It is reviewed once. The critic may report per item, and each item whose PASS and APPROVED name the same commit is accepted. Four separate verdicts on 0acff74 would run the same suite four times.
 
 ## 6. Specification trace
 
@@ -355,8 +356,9 @@ Each normative line of stage-3.md, condensed (T1-T70), with the acceptance tests
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
 | Stage-3 handoff, parts 1-18 (plan 4497d6f) | builder, verifier, critic | 13:22Z | builder (W14 started; commit e98c86a 13:38Z), critic (plan review started), verifier by 13:43Z after a liveness check at 13:42Z (W14-W16 tests drafted) | acknowledged |
-| HANDOFF W14 @ e98c86a (builder) | verifier, critic | by 13:51Z | — | awaiting the first W18 suite commit, then the verdict |
-| Critic plan review @ 4497d6f (REVIEW.md 6093fff: 3 defects, 2 smaller, 2 wording, 5 criteria) -> plan revision: 3.8 (D84, D85), 3.9 (requested page; future `from`), 3.11 (D84, D86), I50, I61, I67, D71, D72, W14.1, W14.6, W14.7, W15.1, W16.9, W17.2, W17.3 | builder, verifier, critic | 13:56Z | — | sent |
+| HANDOFF W14 @ e98c86a (builder) | verifier, critic | by 13:51Z | — | superseded by the W14-W17 handoff at 0acff74 (D87) |
+| Critic plan review @ 4497d6f (REVIEW.md 6093fff: 3 defects, 2 smaller, 2 wording, 5 criteria) -> plan revision: 3.8 (D84, D85), 3.9 (requested page; future `from`), 3.11 (D84, D86), I50, I61, I67, D71, D72, W14.1, W14.6, W14.7, W15.1, W16.9, W17.2, W17.3 | builder, verifier, critic | 13:56Z | critic (every point resolved), builder (built into 0acff74 at 14:05Z, on W15 1268dd8, W16 951904d, W17 f80fc0d) | done |
+| Builder: one HANDOFF of W14 to W17 at 0acff74 once its gate is green -> planner: accepted, verdicted as W17 (D87) | builder, verifier, critic | 14:05Z | — | awaiting the HANDOFF and the first W18 suite commit |
 
 ## 8. Stage close
 
