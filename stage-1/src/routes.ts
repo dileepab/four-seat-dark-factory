@@ -5,6 +5,7 @@ import { login, signup } from './handlers/auth.ts';
 import { me } from './handlers/me.ts';
 import { activity, createPayment } from './handlers/payments.ts';
 import { cancelRequest, createRequest, declineRequest, listRequests, payRequest } from './handlers/requests.ts';
+import { createSettlement } from './handlers/settlements.ts';
 import { createSplit } from './handlers/splits.ts';
 import { health, reset } from './handlers/system.ts';
 
@@ -29,6 +30,7 @@ const ROUTES: Route[] = [
   { method: 'POST', path: '/requests/{id}/decline', handler: declineRequest },
   { method: 'POST', path: '/requests/{id}/cancel', handler: cancelRequest },
   { method: 'POST', path: '/splits', handler: createSplit },
+  { method: 'POST', path: '/settlements', handler: createSettlement },
 ];
 
 export interface RouteMatch {

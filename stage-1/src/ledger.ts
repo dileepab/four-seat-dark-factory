@@ -24,6 +24,14 @@ export interface Transfer {
 
 // Record one payment and apply its balance changes, in one synchronous step.
 export function commitTransfer(st: State, t: Transfer): Payment {
+  const payment = recordPayment(st, t);
+  t.from.balance -= t.amount;
+  t.to.balance += t.amount;
+  return payment;
+}
+
+// Record the payment only; the caller applies the balance changes in the same step.
+export function recordPayment(st: State, t: Transfer): Payment {
   const payment: Payment = {
     id: newId('p', (id) => st.paymentsById.has(id)),
     fromUserId: t.from.id,
@@ -36,8 +44,6 @@ export function commitTransfer(st: State, t: Transfer): Payment {
     createdAt: t.createdAt,
     seq: nextSeq(st),
   };
-  t.from.balance -= t.amount;
-  t.to.balance += t.amount;
   addPayment(st, payment);
   return payment;
 }
