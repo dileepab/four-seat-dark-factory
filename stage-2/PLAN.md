@@ -11,9 +11,10 @@ Frozen reference: `/Users/Dileepa/dark-factory-v3/stage-1/` with its `PLAN.md`, 
 |---|---|---|---|---|
 | W7 | builder | Holds API: `GET /me` money fields, authorizations, capture, void, list, expiry, funds judged on `available` | BLOCKED (PASS @ 16adbc0, suite cb62939; critic BLOCKED: X15, a reset keeping a clock that ran ahead, untested; test owed by the verifier, no product change) | 16adbc0 |
 | W8 | builder | Export schema 2 and import of stage-1 exports (upgrade) | VERIFIED (PASS @ 54acbcd, suite 62c4a4e: 1488 passed --upto 8; npm test 137/137; supplied stage 1 147/147); awaiting critic | 54acbcd |
-| W9 | builder | UI foundation: HTML routes, shell, visual system, signup, login, logout, navigation | PLANNED | — |
-| W10 | builder | Wallet screen `/`: wallet numbers, pay and request forms, activity feed, refresh, uncertain outcomes, upgrade | PLANNED | — |
-| W11 | builder | Requests, split and holds screens | PLANNED | — |
+| W9 | builder | UI foundation: HTML routes, shell, visual system, signup, login, logout, navigation | HANDED_OFF @ 5f9781a (whole UI; W9-W11 verified and reviewed together) | 5f9781a |
+| W10 | builder | Wallet screen `/`: wallet numbers, pay and request forms, activity feed, refresh, uncertain outcomes, upgrade | HANDED_OFF @ 5f9781a | 5f9781a |
+| W11 | builder | Requests, split and holds screens | HANDED_OFF @ 5f9781a | 5f9781a |
+| W13 | builder | UI presentation fixes from the planner's screenshot review (request amount colours, expiry text at 375 px, capture wording) | PLANNED (build in a new commit; hand off after the W9-W11 verdicts) | — |
 | W12 | verifier | Stage-2 acceptance suite: stage-1 regression, holds API, upgrade, browser | BUILDING (suite ca09237, 1980 checks, plan 45fe2dc criteria included; not yet draft-run on a product) | ca09237 |
 
 Item numbers continue from stage 1 (W1–W6) so room messages stay unambiguous. States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
@@ -354,6 +355,15 @@ Specification: "Requests", "Split", the authorization rows of the stage-2 UI tab
 - W11.2 `/split`: the preview matches §9 (10.00 among three gives 3.34, 3.33, 3.33; the extra unit follows the order) before anything is posted, and the submitted split's shares equal it; `split-error` for an unknown handle (server 404), an invalid amount and a repeated handle (no request); `split-success`; an unchanged resubmission creates no second split. A response lost after commit shows `split-uncertain`, not `split-error`; the unchanged retry sends the same key and body, creates the split once and clears both elements.
 - W11.3 `/authorizations`: the authorize form with the decimal rules, `authorize-error` (including insufficient `available`) and `authorize-success`; the list newest first with `data-status`, the exact amount, `authorization-captured-{id}` only when captured, the exact `expires_at` text; the capture input pre-filled with the remainder; capture and void buttons only where allowed; full capture, partial capture and void update the item and the wallet numbers without a reload; `authorization-error` for refusals (expired, not open, exceeds); `empty-authorizations`; seeded holds show right after a reset with `available` as the headline. The same authorize form on `/` creates a hold and updates the wallet numbers there. A lost authorize response shows `authorize-uncertain`; the unchanged retry creates the hold once; an unchanged resubmission after success creates no second hold. A lost capture response shows `authorization-uncertain`; the unchanged retry captures once; once the re-read shows the capture, the uncertain element gives way to the captured state. More than one page of authorizations (for example 205) renders every item once, newest first.
 - W11.4 Every screen passes the I46 checks in each named state (loading, empty, loaded, success, refused, uncertain) at 375×812 and 1280×800, and the no-horizontal-scroll check at 1024×768 too.
+
+### W13 UI presentation fixes (builder)
+
+Specification: "Product and visual direction" ("status, direction, privacy and money movement should be understandable without interpreting raw API data"; "The required flows must remain clear and usable at a 375 CSS-pixel viewport"). Invariants: I45, I46. From the planner's review of the W9-W11 screenshots (builder shots at 5f9781a).
+
+- W13.1 Request amounts follow the same money-direction colours as the feed and the holds list: on `/requests` an amount the viewer would pay (incoming list) is not styled as money received (the green of "Received" payments and "Held for you"), and an amount the viewer would receive (outgoing list) may be; the label says which way the money would go. The text of `request-amount-{id}` stays exactly the formatted amount.
+- W13.2 At 375 px, `authorization-expires-{id}` stays on one line (no break inside the RFC 3339 text), with the human time beside or below it; nothing scrolls horizontally.
+- W13.3 The capture control uses one vocabulary: the input label and the button name the same action (for example "Amount to collect" and "Collect").
+- W13.4 The gate as for W11, with screenshots of `/requests` and `/authorizations` at 375 and 1280 posted with the handoff.
 
 ### W12 Acceptance suite (verifier)
 
