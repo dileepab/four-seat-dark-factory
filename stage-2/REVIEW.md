@@ -468,3 +468,44 @@ Polish, recorded only:
 - a cancelled outgoing request's amount is now green, though nothing will arrive (requests-success);
 - an item's own messages sit 4 px under its controls, where form messages sit 12 px under (requests-refused, authorizations-capture-refused);
 - the place-hold confirmation still says "until @… captures it" (authorizations-success).
+
+## W9, W10, W11, W13: APPROVED @ 095b0270cdc386eed378df7cb5feef65f59cd116 (re-review after the c682c5a blocks)
+
+The fix on top of 92d940d changes only these:
+- `ui/assets`: `api.js`, `kit.js`, `requests.js`, `holds.js`, `auth.js`, `app.css`;
+- a new builder test, `test/w9-api.test.ts`.
+
+The server is unchanged. Suite 75c06e8 holds the plan d29e313 criteria. The verifier's PASS is on 095b027 with suite df5b2bd: `run.sh --upto 13` gave 2026 passed, `npm test` 155 passed, and the supplied checks claim stage 2 in host and isolated mode. Suite df5b2bd is 75c06e8 plus a requests-pay-uncertain screenshot state (`test_w11_requests_ui.py`, `test_w11_states.py`), so my reruns against 75c06e8 stand.
+
+**W9–W11 Reason 1 is resolved.** In `api.js`, these are now unknown outcomes:
+- a 2xx whose body is not a JSON object;
+- a 4xx without the envelope (`isObject`);
+- a list page without its array, which fails the whole read.
+
+Probe P1 on 095b027: the payment commits, then 201 with an empty body. The page shows `pay-uncertain`, with no page error, and the re-read wallet shows 85.00 EUR.
+
+**Reason 2 is resolved.** A request payment and a capture show `UNCERTAIN_MONEY_ACTION_TEXT`. Decline, cancel and void keep the neutral text. My screenshots on 095b027 (`.work/critic-h6bj/shots-095b027/`: requests-uncertain-w1280, authorizations-capture-uncertain-w375) read: "the money may already have moved. ... try again without changing anything: that is safe and cannot move the money twice."
+
+**Reason 3 and the W13 block are resolved.** Suite 75c06e8 kills each mutant on 095b027 for the mutated reason (`mutants_fix.json`, `log_fix_*.txt`, `rerun_logs_ui/FIX-*.txt`; the files and widths as listed):
+
+| Mutant | Killed by |
+|---|---|
+| U01 (4 s becomes 1.5 s) | `test_response_held_past_four_seconds_is_uncertain_and_the_late_answer_is_ignored` (`pay-uncertain` already present at 2.5 s) and `test_an_answer_held_2_8_seconds_is_success_with_no_uncertain_at_any_point` |
+| U02 (4 s becomes 5.5 s) | `test_response_held_past_four_seconds_...`: `pay-uncertain` not visible by 4.7 s |
+| U04 (any 4xx is a refusal) | `test_lost_payment_...[429-bare-after]`: `pay-uncertain` not visible |
+| U50 (the fix undone: any 2xx is ok) | `test_lost_payment_...[empty-after]`, `[null-after]`, `test_a_load_answered_without_a_json_object_ends_in_load_error[empty-after]` |
+| U05 (a stale failure is shown) | `test_a_stale_refresh_that_times_out_after_a_later_one_was_shown_leaves_no_load_error` |
+| U06 (no de-dup) | `test_a_payment_made_between_page_reads_leaves_every_item_once`: "shown more than once: ['activity-item-p_200']" |
+| U30 (a failed later page dropped) | `test_a_failed_later_page_is_a_load_error_never_a_short_list` [/, /requests, /authorizations] |
+| U23 (no capture re-fill) | `test_a_refused_capture_refills_the_input_with_the_new_remainder`: "expected Value '6.00', actual 10.00" |
+| U40 (a note does not wrap) | `test_the_longest_names_handles_and_notes_pass_the_layout_checks_at_375`: "I46 at w375 on / with the longest names, handles and notes" |
+| W13b (the expiry may wrap) | `test_a_64_character_expiry_stays_on_one_line_inside_its_card_at_375`: "the 64-character expiry takes 2 lines at 375" |
+| W13c ("Capture" again) | `test_the_capture_button_names_the_action_of_its_input_label` [w375, w1280]: "the button says 'Capture'; the input's label is 'Amount to collect'" |
+| Controls U08, U10, U11 | The latest-wins tests (and the new stale-timeout test); the confirmed-state tests for capture, void, pay and decline |
+
+- U51 and U52 restore the neutral uncertain text for a request payment and a capture. They survive, as expected: the text is wording, which D58 checks on the screenshots above (the plan's gate asks for them).
+- Clean baseline on 095b027: the six touched files at both widths gave 317 passed. The 2 errors are the stage-1 upgrade test, which needs `--previous-base-url`.
+- My probes P1–P11 all pass on 095b027.
+- The builder's `test/w9-api.test.ts` covers the three outcomes, the 4 s limit from both sides, and the list reader (de-dup, a failed or unreadable later page).
+
+Polish, recorded only: a capture now counts as confirmed when the re-read shows a larger `captured_amount` (plan 3.14's wording). Another client's capture can raise that amount too, which clears this page's uncertain element although its own capture did not happen. The UI's captures are always final, so `status === 'captured'` alone would be exact.
