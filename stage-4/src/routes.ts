@@ -9,6 +9,7 @@ import { me } from './handlers/me.ts';
 import { statement } from './handlers/statement.ts';
 import { activity, createPayment } from './handlers/payments.ts';
 import { refundPayment } from './handlers/refunds.ts';
+import { createCorrectionBatch } from './handlers/batches.ts';
 import { correctPayment, listRevisions } from './handlers/corrections.ts';
 import { cancelRequest, createRequest, declineRequest, listRequests, payRequest } from './handlers/requests.ts';
 import { createSettlement } from './handlers/settlements.ts';
@@ -36,6 +37,7 @@ const ROUTES: Route[] = [
   { method: 'POST', path: '/payments/{id}/corrections', handler: correctPayment },
   { method: 'GET', path: '/payments/{id}/revisions', handler: listRevisions },
   { method: 'POST', path: '/payments/{id}/refunds', handler: refundPayment },
+  { method: 'POST', path: '/correction-batches', handler: createCorrectionBatch },
   { method: 'POST', path: '/requests', handler: createRequest },
   { method: 'GET', path: '/requests', handler: listRequests },
   { method: 'POST', path: '/requests/{id}/pay', handler: payRequest },

@@ -160,6 +160,7 @@ function revisionsOf(p: JsonObject, what: string, see: (seq: unknown, ts: string
     out.push({
       revision: j + 1, amount: o.amount as number, effectiveAt: o.effective_at as string, effKey: effKey as string,
       recordedAt: o.recorded_at as string, recKey: recKey as string, reason: o.reason as string, seq: o.seq as number,
+      batchId: null,
     });
   });
   return out;

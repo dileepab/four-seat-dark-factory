@@ -63,14 +63,15 @@ export function heldIn(st: State, user: User, view: View): number {
 
 // Whether the user's total and available stay at or above 0 at every instant up to `nowKey`
 // at which one of their payments takes effect or one of their holds changes, under the latest
-// revisions, with `replace` standing in for its payment's latest; the movements of one instant
-// are combined first (plan 3.9 step 13, I58).
+// revisions, with each proposed revision in `replace` standing in for its payment's latest, all
+// together; the movements of one instant are combined first (plan 3.9 step 13 and the batch's
+// step 13, I58).
 export function historyStaysCovered(
-  st: State, user: User, nowKey: string, replace: { payment: Payment; revision: Revision } | null,
+  st: State, user: User, nowKey: string, replace: ReadonlyMap<Payment, Revision>,
 ): boolean {
   const events: { key: string; total: number; held: number }[] = [];
   for (const p of st.paymentsOf.get(user.id) ?? []) {
-    const r = replace !== null && replace.payment === p ? replace.revision : p.revisions[p.revisions.length - 1];
+    const r = replace.get(p) ?? p.revisions[p.revisions.length - 1];
     events.push({ key: r.effKey, total: deltaFor(p, user.id, r.amount), held: 0 });
   }
   // A hold changes only at its creation, its captures, its close and its deadline: record the

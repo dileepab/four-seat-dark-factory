@@ -53,6 +53,7 @@ export interface Revision {
   recKey: string;
   reason: string; // "" for revision 1
   seq: number; // the creation sequence when it was recorded (D70)
+  batchId: string | null; // the correction batch that recorded it; null for every other revision (D97)
 }
 
 export interface Payment {
@@ -189,6 +190,8 @@ export interface State {
   paymentsOf: Map<string, Payment[]>; // user id -> the payments they sent or received
   authorizationsOf: Map<string, Authorization[]>; // payer id -> their authorizations
   snapshots: Map<string, Snapshot>; // statement token -> its frozen view
+  membersOf: Map<string, Payment[]>; // settlement id -> the payments that carry it (D98)
+  batchIds: Set<string>; // every correction batch id
   seq: number; // creation counter, the tie-break for equal timestamps
   lastTs: string; // the latest timestamp issued
 }
@@ -216,6 +219,8 @@ export function emptyState(): State {
     paymentsOf: new Map(),
     authorizationsOf: new Map(),
     snapshots: new Map(),
+    membersOf: new Map(),
+    batchIds: new Set(),
     seq: 0,
     lastTs: formatTs(Date.now()),
   };
@@ -294,7 +299,7 @@ export function addPayment(st: State, input: NewPayment): Payment {
     createdKey,
     revisions: input.revisions ?? [{
       revision: 1, amount: input.amount, effectiveAt: input.createdAt, effKey: createdKey,
-      recordedAt: input.createdAt, recKey: createdKey, reason: '', seq: input.seq,
+      recordedAt: input.createdAt, recKey: createdKey, reason: '', seq: input.seq, batchId: null,
     }],
     refunded: 0,
   };
@@ -303,6 +308,7 @@ export function addPayment(st: State, input: NewPayment): Payment {
   st.paymentsById.set(payment.id, payment);
   indexed(st.paymentsOf, payment.fromUserId).push(payment);
   if (payment.toUserId !== payment.fromUserId) indexed(st.paymentsOf, payment.toUserId).push(payment);
+  if (payment.settlementId !== null) indexed(st.membersOf, payment.settlementId).push(payment);
   return payment;
 }
 

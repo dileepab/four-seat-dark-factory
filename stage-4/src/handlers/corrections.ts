@@ -14,8 +14,9 @@ import {
 
 const MAX_REASON = 200;
 
+// Stage 3's six fields, and the batch id on a revision a correction batch recorded (D97).
 export function revisionView(p: Payment, r: Revision): Record<string, unknown> {
-  return {
+  const view: Record<string, unknown> = {
     payment_id: p.id,
     revision: r.revision,
     amount: r.amount,
@@ -23,25 +24,28 @@ export function revisionView(p: Payment, r: Revision): Record<string, unknown> {
     recorded_at: r.recordedAt,
     reason: r.reason,
   };
+  if (r.batchId !== null) view.correction_batch_id = r.batchId;
+  return view;
 }
 
 function integral(value: unknown, min: number, max: number): boolean {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
 }
 
-// Step 6: every field rule, all 422 (D80).
-function correctionFields(body: JsonObject, nowKey: string) {
+// Step 6: every field rule, all 422 (D80); a batch checks each item by the same rules, its
+// messages prefixed with the item (`what`).
+export function correctionFields(body: JsonObject, nowKey: string, what = '') {
   for (const name of ['expected_revision', 'amount', 'effective_at', 'reason']) {
-    if (!has(body, name) || body[name] === null) throw invalid(`${name} is required`);
+    if (!has(body, name) || body[name] === null) throw invalid(`${what}${name} is required`);
   }
-  if (!integral(body.expected_revision, 1, MAX_BALANCE)) throw invalid('expected_revision must be an integer from 1 to 2^53');
-  if (!integral(body.amount, 0, MAX_AMOUNT)) throw invalid(`amount must be an integer from 0 to ${MAX_AMOUNT}`);
+  if (!integral(body.expected_revision, 1, MAX_BALANCE)) throw invalid(`${what}expected_revision must be an integer from 1 to 2^53`);
+  if (!integral(body.amount, 0, MAX_AMOUNT)) throw invalid(`${what}amount must be an integer from 0 to ${MAX_AMOUNT}`);
   const effKey = instantKey(body.effective_at);
-  if (effKey === null) throw invalid('effective_at must be an RFC 3339 instant with an offset, at most 64 characters');
-  if (effKey > nowKey) throw invalid('effective_at must not be later than now');
+  if (effKey === null) throw invalid(`${what}effective_at must be an RFC 3339 instant with an offset, at most 64 characters`);
+  if (effKey > nowKey) throw invalid(`${what}effective_at must not be later than now`);
   const reason = body.reason;
   if (typeof reason !== 'string' || cpLength(reason) < 1 || cpLength(reason) > MAX_REASON) {
-    throw invalid(`reason must be a string of 1 to ${MAX_REASON} characters`);
+    throw invalid(`${what}reason must be a string of 1 to ${MAX_REASON} characters`);
   }
   return {
     expected: body.expected_revision as number, amount: body.amount as number,
@@ -84,10 +88,10 @@ export function correctPayment(ctx: Ctx): Result {
     if (!canCredit(credited, moved)) throw invalid('the correction would take the credited wallet above 2^53');
     const proposed: Revision = {
       revision: latest.revision + 1, amount: fields.amount, effectiveAt: fields.effectiveAt, effKey: fields.effKey,
-      recordedAt: '', recKey: '', reason: fields.reason, seq: 0,
+      recordedAt: '', recKey: '', reason: fields.reason, seq: 0, batchId: null,
     };
     for (const party of [sender, receiver]) {
-      if (!historyStaysCovered(st, party, nowKey, { payment, revision: proposed })) {
+      if (!historyStaysCovered(st, party, nowKey, new Map([[payment, proposed]]))) {
         throw conflict('historical_overdraft', 'the correction would overdraw a wallet at an earlier instant');
       }
     }
