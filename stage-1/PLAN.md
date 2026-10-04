@@ -13,7 +13,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 | W3 | builder | Requests and splits | BUILDING | — |
 | W4 | builder | Settlements | PLANNED | — |
 | W5 | builder | Export and import | PLANNED | — |
-| W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | BUILDING (W1 part committed) | 16f24a6 |
+| W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
 
 States: PLANNED, BUILDING, HANDED_OFF, VERIFIED or FAILED, APPROVED or BLOCKED, ACCEPTED.
 
@@ -358,7 +358,7 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 |---|---|---|---|---|---|
 | N1 | §1 | Sum of balances always equals total seeded by last reset | I1 | w2_load: one_wallet_drained_in_parts_by_fifty_payments, three_wallets_paying_around_a_cycle, conservation_across_fifty_wallets; support: I1 after every test | covered by c989868 |
 | N2 | §1 | No balance negative, including transiently | I2 | w2_load: every burst reads balances while it runs; support: I2 after every test | covered by c989868 |
-| N3 | §1 | A payment request moves money at most once | I3 | | |
+| N3 | §1 | A payment request moves money at most once | I3 | w3_concurrency: twenty_concurrent_pays_with_distinct_keys_pay_once, fifty_concurrent_pays_with_one_key_pay_once, shared_key_and_distinct_keys_racing_pay_once | covered by dd3097b (not yet run on a W3+ product) |
 | N4 | §1 | Amounts are exact integer minor units | I9 | w2_payments: large_balances_are_exact, integral_amount_forms_are_valid, payment_in_other_currencies | covered by c989868 |
 | N5 | §1 | Money moves only between existing wallets | I8 | w2_payments: handle_that_names_no_user_is_404, insufficient_funds_is_409_and_leaves_no_trace | covered by c989868 |
 | N6 | §2 | Dockerfile + RUN.md command builds and starts with no manual setup | W1.1 W1.2 | w1_container: stage_folder_has_dockerfile_and_run_md_and_no_git, run_md_gives_build_run_and_test_commands | covered by 16f24a6 |
@@ -378,14 +378,14 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | N20 | §4 | Handle unique, ^[a-z0-9_]{1,20}$, never changes | I14 | w1_reset: invalid_fixture[duplicate handle, handle upper case, handle with dash, handle 21 chars, handle empty]; w1_auth: signup_ignores_a_handle_and_a_balance_in_the_body | covered by 16f24a6 |
 | N21 | §4 | Seeded users take the fixture handle | W1.4 | w1_auth: me_for_every_seeded_user | covered by 16f24a6 |
 | N22 | §4 | Signup derives handle (lowercase, non [a-z0-9_] to _, 20 chars); taken fails | W1.5 | w1_auth: handle_is_derived_from_the_local_part, taken_derived_handle_is_409_and_creates_no_account, truncation_collision_is_handle_taken | covered by 16f24a6 |
-| N23 | §4 | New users start at 0, can receive and be asked immediately | W1.7 | w1_auth: new_user_me_has_derived_handle_zero_balance_and_service_currency; w2_payments: new_user_can_receive_and_then_pay (being asked: W3) | covered by c989868 |
-| N24 | §4 | Payment moves money immediately and atomically, direct or by paying a request | I8 | w2_payments: payment_moves_money_both_ways (paying a request: W3) | covered by c989868 |
-| N25 | §4 | Request lifecycle; only payer pays/declines; only requester cancels | I4 | | |
-| N26 | §4 | Request may exceed payer balance; pay while short is 409 and changes nothing; payable later | W3.1 W3.2 | | |
-| N27 | §4 | Visibility belongs to the payment, chosen by the payer; requests have none and never appear in feeds | I5 I7 | | |
+| N23 | §4 | New users start at 0, can receive and be asked immediately | W1.7 | w1_auth: new_user_me_has_derived_handle_zero_balance_and_service_currency; w2_payments: new_user_can_receive_and_then_pay; w3_requests: request_can_be_made_of_a_new_user | covered by dd3097b (not yet run on a W3+ product) |
+| N24 | §4 | Payment moves money immediately and atomically, direct or by paying a request | I8 | w2_payments: payment_moves_money_both_ways; w3_requests: pay_creates_a_payment_and_marks_the_request_paid | covered by dd3097b (not yet run on a W3+ product) |
+| N25 | §4 | Request lifecycle; only payer pays/declines; only requester cancels | I4 | w3_requests: only_the_payer_may_pay, only_the_payer_may_decline, only_the_requester_may_cancel, terminal_states_never_change; w3_concurrency: pay_racing_decline_or_cancel_has_one_winner, decline_racing_cancel_has_one_winner | covered by dd3097b (not yet run on a W3+ product) |
+| N26 | §4 | Request may exceed payer balance; pay while short is 409 and changes nothing; payable later | W3.1 W3.2 | w3_requests: request_above_the_payers_balance_is_created_and_moves_nothing, paying_while_short_is_409_and_payable_later; w3_concurrency: one_payer_short_for_many_requests_pays_what_it_can | covered by dd3097b (not yet run on a W3+ product) |
+| N27 | §4 | Visibility belongs to the payment, chosen by the payer; requests have none and never appear in feeds | I5 I7 | w3_requests: pay_defaults_to_public, pay_creates_a_payment_and_marks_the_request_paid, request_ignores_visibility_and_spoofed_fields; w2_activity: requests_and_splits_never_appear_in_the_feed | covered by dd3097b (not yet run on a W3+ product) |
 | N28 | §4 | Feed iff public or caller is sender/receiver; no other rule | I5 | w2_activity: feed_rule_for_sender_receiver_and_third_parties, new_user_sees_only_public_payments | covered by c989868 |
-| N29 | §4 | Requests never in feed; GET /requests only the caller's | I5 I6 | | |
-| N30 | §4 | Split not a feed item; its requests visible to their parties; fulfilling payments follow the feed rule | I5 W3.7 | | |
+| N29 | §4 | Requests never in feed; GET /requests only the caller's | I5 I6 | w2_activity: requests_and_splits_never_appear_in_the_feed; w3_requests: a_non_party_sees_none_of_them, every_listed_request_has_the_caller_as_a_party | covered by dd3097b (not yet run on a W3+ product) |
+| N30 | §4 | Split not a feed item; its requests visible to their parties; fulfilling payments follow the feed rule | I5 W3.7 | w2_activity: requests_and_splits_never_appear_in_the_feed; w3_splits: split_requests_are_listed_for_their_two_parties_only; w3_requests: pay_creates_a_payment_and_marks_the_request_paid | covered by dd3097b (not yet run on a W3+ product) |
 | N31 | §4 | Visibility one value seen identically; private hidden from third parties only | I7 | w2_activity: private_payment_is_visible_to_both_parties_with_one_visibility, feed_items_equal_their_receipts_for_everyone_who_sees_them | covered by c989868 |
 | N32 | §4 | amount at most 1e9; balances within 2^53; exact arithmetic | I9 | w2_payments: maximum_amount_is_in_range, payment_that_would_push_a_balance_past_2_53_is_422, large_balances_are_exact | covered by c989868 |
 | N33 | §4 | Fixture format: currency, minor_units, users, payments, requests | W1.4 | w1_reset: reset_returns_204_with_no_body_and_seeds_users, valid_fixture_edges | covered by 16f24a6 |
@@ -405,7 +405,7 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | N47 | §6 | email_taken 409; password < 8 422; email form 422; login 401; handle_taken 409 creates nothing | W1.5 | w1_auth: registered_email_is_email_taken_case_insensitively, password_length_in_code_points, email_must_be_local_at_domain, wrong_password_or_unknown_email_is_401, taken_derived_handle_is_409_and_creates_no_account | covered by 16f24a6 |
 | N48 | §6 | Bearer token on every endpoint except health, reset, signup, login (and export/import) | W1.6 | w1_auth: bad_or_missing_bearer_is_401 (every endpoint), signup_/login_ignores_an_invalid_authorization_header; w1_transport: health_ignores_an_invalid_authorization_header; w1_reset: reset_ignores_an_invalid_authorization_header | covered by 16f24a6 |
 | N49 | §6 | Tokens never expire; many tokens and sessions per account | I13 | w1_auth: every_issued_token_stays_valid, tokens_are_long_random_base64url | covered by 16f24a6 |
-| N50 | §6 | Password hashing; no plaintext | I12 | | |
+| N50 | §6 | Password hashing; no plaintext | I12 | w5: export_holds_no_plaintext_password_or_bearer_token | covered by dd3097b (not yet run on a W3+ product) |
 | N51 | §7 | Five write paths require Idempotency-Key | W2.3 W3.2 W3.6 W4.5 | w2_idempotency: missing_key_is_400_and_changes_nothing (all five paths are marked by item; W3-W5 paths run with their items) | covered by c989868 |
 | N52 | §7 | Key scoped to the user | I19 | w2_idempotency: keys_are_scoped_per_user_on_payments | covered by c989868 |
 | N53 | §7 | Replay = same user, method, path, body; other path is a first use | I19 | w2_idempotency: same_key_on_every_path_is_independent, query_string_is_not_part_of_the_key_path, settlement_key_is_independent_of_other_paths_and_users | covered by c989868 |
@@ -419,40 +419,40 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | N61 | §8 | POST /payments error table | W2.2 | w2_payments: insufficient_funds_is_409_and_leaves_no_trace, invalid_amount_is_422..., paying_your_own_handle_is_self_payment, note_length_counts_code_points, visibility_other_than_public_or_private_is_422, handle_that_names_no_user_is_404, precedence tests | covered by c989868 |
 | N62 | §8 | Debit and credit atomic; failed payment leaves no trace | I8 | w2_payments: payment_moves_money_both_ways, insufficient_funds_is_409_and_leaves_no_trace; w2_load: feed_matches_the_successful_payments_after_a_burst | covered by c989868 |
 | N63 | §8 | note verbatim, Unicode byte for byte | I20 | w2_payments: note_round_trips_verbatim_everywhere, note_length_counts_code_points | covered by c989868 |
-| N64 | §8 | POST /requests 201 shape; caller is requester | W3.1 | | |
-| N65 | §8 | POST /requests error table | W3.1 | | |
-| N66 | §8 | Payer balance not checked at request creation | W3.1 | | |
-| N67 | §8 | Pay: payer only; optional visibility default public; replay needs identical body | W3.2 | | |
-| N68 | §8 | Pay 201 payment with request_id; request paid with payment_id | W3.2 | | |
-| N69 | §8 | Pay error table | W3.2 | | |
-| N70 | §8 | Pay replay 200 original, even when paid; no extra money; never 409 | I15 W3.2 | | |
-| N71 | §8 | Decline rules | W3.4 | | |
-| N72 | §8 | Cancel rules | W3.4 | | |
-| N73 | §8 | GET /requests filters, order, paging, 422s, has_more | W3.5 | | |
-| N74 | §8 | Splits: one pending request per non-caller participant; caller optional; §9 shares in order | W3.6 | | |
-| N75 | §8 | Split response: shares (all, in order, sum) and requests (non-callers, in order) | W3.6 | | |
-| N76 | §8 | Split error table | W3.6 | | |
-| N77 | §8 | Caller-only split valid with requests []; no balance checks | W3.6 | | |
+| N64 | §8 | POST /requests 201 shape; caller is requester | W3.1 | w3_requests: request_201_has_exactly_the_request_fields, request_appears_for_both_parties_identically, request_note_defaults_to_empty | covered by dd3097b (not yet run on a W3+ product) |
+| N65 | §8 | POST /requests error table | W3.1 | w3_requests: invalid_request_amount_is_422, request_note_length, non_string_request_note_is_422, requesting_from_yourself_is_self_request, unknown_payer_is_404, wrong_type_payer_handle_is_400, missing_payer_handle_or_amount_is_422, request_precedence | covered by dd3097b (not yet run on a W3+ product) |
+| N66 | §8 | Payer balance not checked at request creation | W3.1 | w3_requests: request_above_the_payers_balance_is_created_and_moves_nothing | covered by dd3097b (not yet run on a W3+ product) |
+| N67 | §8 | Pay: payer only; optional visibility default public; replay needs identical body | W3.2 | w3_requests: only_the_payer_may_pay, pay_defaults_to_public, pay_with_bad_visibility_is_422, empty_object_and_explicit_public_are_different_bodies, pay_with_an_empty_body_is_400 | covered by dd3097b (not yet run on a W3+ product) |
+| N68 | §8 | Pay 201 payment with request_id; request paid with payment_id | W3.2 | w3_requests: pay_creates_a_payment_and_marks_the_request_paid, pay_ignores_amount_and_note_in_the_body | covered by dd3097b (not yet run on a W3+ product) |
+| N69 | §8 | Pay error table | W3.2 | w3_requests: paying_a_non_pending_request_is_409, paying_while_short_is_409_and_payable_later, only_the_payer_may_pay, pay_unknown_request_is_404, pay_precedence | covered by dd3097b (not yet run on a W3+ product) |
+| N70 | §8 | Pay replay 200 original, even when paid; no extra money; never 409 | I15 W3.2 | w3_requests: pay_replay_is_200_never_409; w3_concurrency: fifty_concurrent_pays_with_one_key_pay_once | covered by dd3097b (not yet run on a W3+ product) |
+| N71 | §8 | Decline rules | W3.4 | w3_requests: decline_and_decline_again, only_the_payer_may_decline, terminal_states_never_change, decline_and_cancel_need_no_key_and_ignore_the_body, declined_request_moves_no_money, decline_and_cancel_of_unknown_request_are_404 | covered by dd3097b (not yet run on a W3+ product) |
+| N72 | §8 | Cancel rules | W3.4 | w3_requests: cancel_and_cancel_again, only_the_requester_may_cancel, terminal_states_never_change, decline_and_cancel_need_no_key_and_ignore_the_body | covered by dd3097b (not yet run on a W3+ product) |
+| N73 | §8 | GET /requests filters, order, paging, 422s, has_more | W3.5 | w3_requests: filters_for_ada, requests_are_newest_first_and_page, has_more_respects_the_filter, invalid_request_list_parameters_are_422, request_list_ignores_unknown_parameters, a_non_party_sees_none_of_them | covered by dd3097b (not yet run on a W3+ product) |
+| N74 | §8 | Splits: one pending request per non-caller participant; caller optional; §9 shares in order | W3.6 | w3_splits: caller_may_be_omitted, caller_in_the_middle_keeps_order, specification_rounding_table | covered by dd3097b (not yet run on a W3+ product) |
+| N75 | §8 | Split response: shares (all, in order, sum) and requests (non-callers, in order) | W3.6 | w3_splits: specification_rounding_table, caller_in_the_middle_keeps_order, split_and_its_requests_share_one_created_at | covered by dd3097b (not yet run on a W3+ product) |
+| N76 | §8 | Split error table | W3.6 | w3_splits: invalid_split_amount_is_422, empty_or_duplicate_participants_are_422, missing_participants_is_422, missing_amount_is_422, non_array_or_non_string_participants_are_400, more_than_200_participants_is_422, split_note_rules, first_unknown_handle_is_404, split_precedence, failed_split_creates_nothing | covered by dd3097b (not yet run on a W3+ product) |
+| N77 | §8 | Caller-only split valid with requests []; no balance checks | W3.6 | w3_splits: caller_only_split_creates_no_requests, split_checks_nobody_balance | covered by dd3097b (not yet run on a W3+ product) |
 | N78 | §8 | GET /activity: feed rule, newest first, paging as /requests | W2.5 | w2_activity: feed_rule_for_sender_receiver_and_third_parties, feed_is_newest_first_in_creation_order, paging_with_limit_offset_and_has_more, default_limit_is_50, empty_feed, invalid_paging_parameters_are_422, activity_ignores_other_parameters | covered by c989868 |
-| N79 | §9 | Shares whole, sum, differ by 1, larger first; table rows | I21 | | |
-| N80 | §9 | Order moves the extra unit; zero share legal and gets a request | W3.6 | | |
-| N81 | §9 | Splits independent; balances sum to seeded total after splits paid | I1 W3.6 | | |
-| N82 | §10 | Export and import unauthenticated | W5.1 | | |
-| N83 | §10 | Export 200 {track, format_version 1, state} accepted unchanged by import | W5.1 | | |
-| N84 | §10 | Import atomic, 204, no dependency on source process/files/port/network | W5.2 | | |
-| N85 | §10 | Import replaces, never merges; repeat gives no duplicates | W5.2 | | |
-| N86 | §10 | Invalid JSON 400; missing fields, wrong track/version, invalid state 422, destination unchanged | W5.3 | | |
-| N87 | §10 | Export is an atomic read-only snapshot | I26 W5.1 | | |
-| N88 | §10 | Preserve accounts, hashed logins, tokens, currency, balances, payments, requests, permissions, idempotency bodies and responses | I26 W5.2 | | |
-| N89 | §10 | No regenerated ids/timestamps, no replay; failed keys reusable; receipts, tokens, retries valid | W5.2 W5.4 | | |
-| N90 | §10 | Import removes earlier data and credentials; reset clears imported state | W5.2 | | |
-| N91 | §11 | settlement_operator_ids default []; operators settle any wallets; no extra read access | W4.1 I24 | | |
-| N92 | §11 | Settlements need operator and key; 401 without token; 403 non-operator | W4.1 | | |
-| N93 | §11 | transfers 1..32, payment field rules, 404, self_payment, 422 shape, input-order precedence before funds | W4.2 | | |
-| N94 | §11 | Net affordability; 409; all or none; failure claims no key and creates nothing | I22 W4.3 | | |
-| N95 | §11 | 201 {settlement_id, committed_at, payments in order}; membership fields | I23 W4.4 | | |
-| N96 | §11 | Members follow feed visibility; response holds every receipt; replay 200 original | W4.4 W4.5 | | |
-| N97 | §11 | Reset/import preserve operator permissions, payments, requests, membership, retry responses | W5.2 | | |
+| N79 | §9 | Shares whole, sum, differ by 1, larger first; table rows | I21 | w3_splits: specification_rounding_table, splits_in_other_currencies | covered by dd3097b (not yet run on a W3+ product) |
+| N80 | §9 | Order moves the extra unit; zero share legal and gets a request | W3.6 | w3_splits: extra_unit_follows_handle_order, zero_shares_still_produce_requests; w3_requests: zero_amount_request_from_a_split_is_payable | covered by dd3097b (not yet run on a W3+ product) |
+| N81 | §9 | Splits independent; balances sum to seeded total after splits paid | I1 W3.6 | w3_splits: many_splits_are_independent_and_conserve, paying_every_share_conserves_money | covered by dd3097b (not yet run on a W3+ product) |
+| N82 | §10 | Export and import unauthenticated | W5.1 | w5: export_shape_and_unauthenticated, import_ignores_an_invalid_authorization_header | covered by dd3097b (not yet run on a W3+ product) |
+| N83 | §10 | Export 200 {track, format_version 1, state} accepted unchanged by import | W5.1 | w5: export_shape_and_unauthenticated, round_trip_in_the_same_container | covered by dd3097b (not yet run on a W3+ product) |
+| N84 | §10 | Import atomic, 204, no dependency on source process/files/port/network | W5.2 | w5: round_trip_into_a_second_container, round_trip_in_the_same_container | covered by dd3097b (not yet run on a W3+ product) |
+| N85 | §10 | Import replaces, never merges; repeat gives no duplicates | W5.2 | w5: importing_twice_equals_importing_once | covered by dd3097b (not yet run on a W3+ product) |
+| N86 | §10 | Invalid JSON 400; missing fields, wrong track/version, invalid state 422, destination unchanged | W5.3 | w5: rejected_import_changes_nothing, import_over_64_mib_is_422_and_changes_nothing | covered by dd3097b (not yet run on a W3+ product) |
+| N87 | §10 | Export is an atomic read-only snapshot | I26 W5.1 | w5: export_is_read_only, snapshot_is_not_affected_by_later_writes, export_during_a_burst_is_a_consistent_snapshot, export_of_a_large_state_round_trips_within_the_time_limit | covered by dd3097b (not yet run on a W3+ product) |
+| N88 | §10 | Preserve accounts, hashed logins, tokens, currency, balances, payments, requests, permissions, idempotency bodies and responses | I26 W5.2 | w5: round_trip_in_the_same_container, round_trip_into_a_second_container, import_preserves_failed_keys_pending_requests_and_operators | covered by dd3097b (not yet run on a W3+ product) |
+| N89 | §10 | No regenerated ids/timestamps, no replay; failed keys reusable; receipts, tokens, retries valid | W5.2 W5.4 | w5: new_ids_never_collide_and_time_moves_forward_after_import, import_preserves_failed_keys_pending_requests_and_operators, round trips (replays of all five paths) | covered by dd3097b (not yet run on a W3+ product) |
+| N90 | §10 | Import removes earlier data and credentials; reset clears imported state | W5.2 | w5: round_trip_in_the_same_container (post-export users and tokens gone), reset_after_import_clears_it | covered by dd3097b (not yet run on a W3+ product) |
+| N91 | §11 | settlement_operator_ids default []; operators settle any wallets; no extra read access | W4.1 I24 | w4: operator_list_comes_from_the_fixture, no_operators_by_default, signed_up_user_is_not_an_operator, operator_can_move_money_between_two_other_wallets, members_follow_the_ordinary_feed_rule; w3_requests: operator_gains_no_reach_into_other_peoples_requests | covered by dd3097b (not yet run on a W3+ product) |
+| N92 | §11 | Settlements need operator and key; 401 without token; 403 non-operator | W4.1 | w4: no_token_is_401, non_operator_is_403_before_key_and_body, operator_without_key_is_400 | covered by dd3097b (not yet run on a W3+ product) |
+| N93 | §11 | transfers 1..32, payment field rules, 404, self_payment, 422 shape, input-order precedence before funds | W4.2 | w4: malformed_batch_shape_is_422, thirty_two_transfers_are_allowed, invalid_entry_is_422, unknown_handles_are_404, self_transfer_is_self_payment, entry_errors_in_input_order_before_funds, unknown_fields_are_ignored | covered by dd3097b (not yet run on a W3+ product) |
+| N94 | §11 | Net affordability; 409; all or none; failure claims no key and creates nothing | I22 W4.3 | w4: net_affordability_chain_through_an_empty_wallet, exactly_zero_after_netting_is_affordable, unaffordable_settlement_is_409_and_changes_nothing, failed_validation_claims_no_key, settlement_past_2_53_is_422_and_changes_nothing | covered by dd3097b (not yet run on a W3+ product) |
+| N95 | §11 | 201 {settlement_id, committed_at, payments in order}; membership fields | I23 W4.4 | w4: settlement_201_shape_and_members, ordinary_payments_have_null_settlement_id, members_are_listed_in_input_order_newest_first, same_pair_twice_gives_two_payments | covered by dd3097b (not yet run on a W3+ product) |
+| N96 | §11 | Members follow feed visibility; response holds every receipt; replay 200 original | W4.4 W4.5 | w4: members_follow_the_ordinary_feed_rule, replay_returns_the_complete_original, settlement_201_shape_and_members, concurrent_settlements_and_payments_conserve | covered by dd3097b (not yet run on a W3+ product) |
+| N97 | §11 | Reset/import preserve operator permissions, payments, requests, membership, retry responses | W5.2 | w5: import_preserves_failed_keys_pending_requests_and_operators, round trips; w1_reset: fixture_settlement_id_is_shown_unchanged; w4: operator_list_comes_from_the_fixture | covered by dd3097b (not yet run on a W3+ product) |
 
 ## 7. Handoff log
 
