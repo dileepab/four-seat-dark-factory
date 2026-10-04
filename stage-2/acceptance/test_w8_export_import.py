@@ -277,12 +277,11 @@ def _swap(record: dict, old, new) -> None:
 def corrupt(snap: Snapshot, how: str, api_view: dict):
     body = copy.deepcopy(snap.body)
     state = body["state"]
-    if how.startswith("schema "):
-        value = json.loads(how.split(" ", 1)[1])
-        state["schema"] = value
-        return body
     if how == "schema missing":
         state.pop("schema")
+        return body
+    if how.startswith("schema "):
+        state["schema"] = json.loads(how.split(" ", 1)[1])
         return body
     # The capture payment copies the note, so the authorization is the record with the note and the amount.
     rec = _record_holding_all(state, (SENTINEL_NOTE, SENTINEL_AMOUNT))
