@@ -4,7 +4,7 @@
 import { call, readAll } from './api.js';
 import { fill, h, icon } from './dom.js';
 import {
-  createLoads, createStatus, keepFocus, party, statusBadge, timeEl, UNCERTAIN_ACTION_TEXT,
+  createLoads, createStatus, keepFocus, party, statusBadge, timeEl, UNCERTAIN_ACTION_TEXT, UNCERTAIN_MONEY_ACTION_TEXT,
 } from './kit.js';
 import { formatMoney } from './money.js';
 import { newKey } from './retry.js';
@@ -18,7 +18,7 @@ export function requestsScreen(main, ctx) {
   let requests = null;
   const inFlight = new Set();
   const payKeys = new Map(); // request id -> the key of its payment, kept for retries
-  let pending = null; // { id, expect } after an unknown outcome
+  let pending = null; // { id, expect } after an unknown outcome: resolved when a re-read shows it
   let concerns = null; // the id of the request the latest action's messages are about
 
   const reload = () => loads.loadAll('me', 'requests');
@@ -39,7 +39,7 @@ export function requestsScreen(main, ctx) {
     if (me) render();
   });
 
-  async function act(id, expect, send) {
+  async function act(id, expect, send, uncertainText = UNCERTAIN_ACTION_TEXT) {
     inFlight.add(id);
     concerns = id;
     render();
@@ -53,7 +53,7 @@ export function requestsScreen(main, ctx) {
       if (outcome.status === 401) return;
       actions.set({ error: outcome.message, uncertain: null });
     } else {
-      actions.set({ error: null, uncertain: UNCERTAIN_ACTION_TEXT });
+      actions.set({ error: null, uncertain: uncertainText });
       pending = { id, expect };
     }
     render();
@@ -62,7 +62,8 @@ export function requestsScreen(main, ctx) {
 
   const pay = (id) => {
     if (!payKeys.has(id)) payKeys.set(id, newKey());
-    return act(id, 'paid', () => call('POST', `/requests/${encodeURIComponent(id)}/pay`, { body: {}, key: payKeys.get(id) }));
+    return act(id, 'paid', () => call('POST', `/requests/${encodeURIComponent(id)}/pay`, { body: {}, key: payKeys.get(id) }),
+      UNCERTAIN_MONEY_ACTION_TEXT);
   };
   const decline = (id) => act(id, 'declined', () => call('POST', `/requests/${encodeURIComponent(id)}/decline`));
   const cancel = (id) => act(id, 'cancelled', () => call('POST', `/requests/${encodeURIComponent(id)}/cancel`));
@@ -82,8 +83,11 @@ export function requestsScreen(main, ctx) {
         type: 'button', testid: `request-cancel-${id}`, class: 'button secondary small', disabled: busy, onclick: () => cancel(id),
       }, 'Cancel request'));
     }
-    // The item's colour follows the money, as in the feed: a request you would pay is money out (W13.1).
-    return h('li', { testid: `request-item-${id}`, 'data-status': r.status, class: `item ${incoming ? 'out' : 'in'}` },
+    // The item's colour follows the money, as in the feed: a request you would pay is money out
+    // (W13.1); a declined or cancelled one moves nothing.
+    const moves = r.status === 'pending' || r.status === 'paid';
+    const direction = !moves ? 'other' : incoming ? 'out' : 'in';
+    return h('li', { testid: `request-item-${id}`, 'data-status': r.status, class: `item ${direction}` },
       h('div', { class: 'item-main' },
         h('p', { class: 'item-meta' },
           h('span', { class: 'direction' }, incoming ? 'Asks you to pay' : 'You asked to be paid'), statusBadge(r.status)),
@@ -103,7 +107,7 @@ export function requestsScreen(main, ctx) {
     const atItem = requests.some((r) => r.request_id === concerns);
     const itemWithMessages = (r, isIncoming) => {
       const li = item(r, isIncoming);
-      if (atItem && r.request_id === concerns) li.append(h('div', { class: 'item-row' }, actions.region));
+      if (atItem && r.request_id === concerns) li.append(h('div', { class: 'item-row item-messages' }, actions.region));
       return li;
     };
     keepFocus(() => fill(lists,

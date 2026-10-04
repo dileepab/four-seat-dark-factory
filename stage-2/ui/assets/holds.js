@@ -5,7 +5,7 @@ import { call, readAll } from './api.js';
 import { fill, h, icon } from './dom.js';
 import {
   amountInput, createLoads, createStatus, field, keepFocus, moneyForm, party, privateBadge, statusBadge, textInput,
-  timeEl, UNCERTAIN_ACTION_TEXT, visibilitySelect, walletSummary,
+  timeEl, UNCERTAIN_ACTION_TEXT, UNCERTAIN_MONEY_ACTION_TEXT, visibilitySelect, walletSummary,
 } from './kit.js';
 import { decimalText, formatMoney, parseAmount } from './money.js';
 import { RetryIdentity } from './retry.js';
@@ -43,7 +43,7 @@ export function authorizeForm(ctx, getMe, after) {
     success: (a) => {
       const m = getMe();
       return `Placed a hold of ${formatMoney(a.amount, m.minor_units, m.currency)} for @${a.to_handle}. `
-        + `It is reserved, not sent, until @${a.to_handle} captures it or it expires.`;
+        + `It is reserved, not sent, until @${a.to_handle} collects it or it expires.`;
     },
     after,
   });
@@ -64,7 +64,7 @@ export function holdsScreen(main, ctx) {
   let items = null;
   const inFlight = new Set(); // authorization ids with a capture or void on the way
   const captures = new Map(); // id -> { text, edited, identity }: the capture inputs survive re-renders
-  let pending = null; // { id, expect } after an unknown outcome: resolved when a re-read shows it
+  let pending = null; // { id, done(item) } after an unknown outcome: resolved when a re-read shows it
   let concerns = null; // the id of the hold the latest action's messages are about
 
   const reload = () => loads.loadAll('me', 'list');
@@ -79,7 +79,7 @@ export function holdsScreen(main, ctx) {
     items = data;
     if (pending) {
       const now = items.find((a) => a.authorization_id === pending.id);
-      if (now && now.status === pending.expect) {
+      if (now && pending.done(now)) {
         actions.set({ uncertain: null });
         pending = null;
       }
@@ -108,11 +108,14 @@ export function holdsScreen(main, ctx) {
       return;
     }
     const { key, body } = state.identity.submission({ amount: parsed.value });
-    await act(a.authorization_id, 'captured',
-      () => call('POST', `/authorizations/${encodeURIComponent(a.authorization_id)}/capture`, { body, key }));
+    // A capture took effect when the hold is captured or holds a larger captured amount (3.14).
+    const before = a.captured_amount;
+    await act(a.authorization_id, (x) => x.status === 'captured' || x.captured_amount > before,
+      () => call('POST', `/authorizations/${encodeURIComponent(a.authorization_id)}/capture`, { body, key }),
+      UNCERTAIN_MONEY_ACTION_TEXT);
   }
 
-  async function act(id, expect, send) {
+  async function act(id, done, send, uncertainText = UNCERTAIN_ACTION_TEXT) {
     inFlight.add(id);
     concerns = id;
     render();
@@ -126,8 +129,8 @@ export function holdsScreen(main, ctx) {
       if (outcome.status === 401) return;
       actions.set({ error: outcome.message, uncertain: null });
     } else {
-      actions.set({ error: null, uncertain: UNCERTAIN_ACTION_TEXT });
-      pending = { id, expect };
+      actions.set({ error: null, uncertain: uncertainText });
+      pending = { id, done };
     }
     render();
     await reload();
@@ -160,7 +163,8 @@ export function holdsScreen(main, ctx) {
       controls = h('div', { class: 'item-actions' },
         h('button', {
           type: 'button', testid: `authorization-void-${id}`, class: 'button secondary small', disabled: busy,
-          onclick: () => act(id, 'voided', () => call('POST', `/authorizations/${encodeURIComponent(id)}/void`)),
+          onclick: () => act(id, (x) => x.status === 'voided',
+            () => call('POST', `/authorizations/${encodeURIComponent(id)}/void`)),
         }, 'Release hold'));
     }
     return h('li', { testid: `authorization-item-${id}`, 'data-status': a.status, class: `item hold ${outgoing ? 'out' : 'in'}` },
@@ -191,7 +195,7 @@ export function holdsScreen(main, ctx) {
     const atItem = items.some((a) => a.authorization_id === concerns);
     const itemWithMessages = (a) => {
       const li = item(a);
-      if (atItem && a.authorization_id === concerns) li.append(h('div', { class: 'item-row' }, actions.region));
+      if (atItem && a.authorization_id === concerns) li.append(h('div', { class: 'item-row item-messages' }, actions.region));
       return li;
     };
     keepFocus(() => fill(listSection,

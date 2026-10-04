@@ -115,6 +115,11 @@ export function createStatus(prefix, { success = true } = {}) {
 
 export const UNCERTAIN_TEXT = 'We could not confirm whether this went through: the money may already have moved. '
   + 'Check the latest figures, or submit again without changing anything: that is safe and cannot move it twice.';
+// An item action that moves money (request pay, capture), and one that does not (decline,
+// cancel, void).
+export const UNCERTAIN_MONEY_ACTION_TEXT = 'We could not confirm whether this went through: the money may already '
+  + 'have moved. The list has been refreshed. Check it, or try again without changing anything: that is safe and '
+  + 'cannot move the money twice.';
 export const UNCERTAIN_ACTION_TEXT = 'We could not confirm whether this went through. '
   + 'The list has been refreshed; if nothing changed, try again.';
 

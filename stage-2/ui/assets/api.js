@@ -2,10 +2,11 @@
 //
 // Every call sends `Accept: application/json`, and the bearer token when signed in. It ends
 // in one of three outcomes:
-//   ok       a 2xx with a JSON body (201, or a 200 replay)
+//   ok       a 2xx whose body is a JSON object (201, or a 200 replay)
 //   refused  a 4xx with the error envelope: the service said no, nothing happened
-//   unknown  anything else: network failure, abort, no answer within 4 s, a 5xx or a body
-//            that is not JSON. The write may or may not have happened.
+//   unknown  anything else: network failure, abort, no answer within 4 s, a 5xx, a 4xx
+//            without the envelope, or a body that is not a JSON object (empty included).
+//            The write may or may not have happened.
 
 export const TIMEOUT_MS = 4000;
 const TOKEN_KEY = 'pocketful.token';
@@ -78,14 +79,22 @@ export async function call(method, path, { body, key, auth = true } = {}) {
     return { kind: 'unknown', reason: 'unreadable' };
   }
   const status = response.status;
-  if (status >= 200 && status < 300) return { kind: 'ok', status, data };
-  const error = data && typeof data === 'object' ? data.error : null;
+  // Every answer the page uses is a JSON object: a 2xx with an empty body, or with any other
+  // JSON, cannot be read as the result, so it is an unknown outcome too (3.14 Outcomes).
+  if (status >= 200 && status < 300) {
+    return isObject(data) ? { kind: 'ok', status, data } : { kind: 'unknown', reason: 'unreadable' };
+  }
+  const error = isObject(data) ? data.error : null;
   if (status >= 400 && status < 500 && error && typeof error.code === 'string') {
     // A 401 to a call that sent the token: the session is over (D65). Sign-in forms are not.
     if (status === 401 && token) onSessionEnded(token);
     return { kind: 'refused', status, code: error.code, message: describe(error.code, error.message) };
   }
   return { kind: 'unknown', reason: `status ${status}` };
+}
+
+function isObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // Reads a whole list: the bare path first, then `offset`/`limit=200` pages while `has_more`,
@@ -95,8 +104,10 @@ export async function readAll(path, field, idOf) {
   if (first.kind !== 'ok') return first;
   const items = [];
   const seen = new Set();
+  // A page whose list is missing or not an array cannot be read: the load is unknown.
+  const unreadable = (page) => !Array.isArray(page[field]);
   const take = (page) => {
-    for (const item of page[field] ?? []) {
+    for (const item of page[field]) {
       const id = idOf(item);
       if (!seen.has(id)) {
         seen.add(id);
@@ -104,14 +115,16 @@ export async function readAll(path, field, idOf) {
       }
     }
   };
+  if (unreadable(first.data)) return { kind: 'unknown', reason: 'unreadable' };
   take(first.data);
   let more = first.data.has_more === true;
-  let offset = (first.data[field] ?? []).length;
+  let offset = first.data[field].length;
   while (more) {
     const next = await call('GET', `${path}?offset=${offset}&limit=200`);
     if (next.kind !== 'ok') return next;
+    if (unreadable(next.data)) return { kind: 'unknown', reason: 'unreadable' };
     take(next.data);
-    const count = (next.data[field] ?? []).length;
+    const count = next.data[field].length;
     offset += count;
     more = next.data.has_more === true && count > 0;
   }

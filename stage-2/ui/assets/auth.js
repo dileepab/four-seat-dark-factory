@@ -21,7 +21,7 @@ function authForm(main, ctx, { title, intro, fields, submitTestid, submitLabel, 
     inFlight = false;
     button.disabled = false;
     if (!ctx.alive) return;
-    if (outcome.kind !== 'ok') {
+    if (outcome.kind !== 'ok' || typeof outcome.data.token !== 'string') {
       const message = outcome.kind === 'refused' ? outcome.message : UNREACHABLE;
       fill(error, h('p', { testid: 'auth-error', class: 'message refused', role: 'alert' }, icon('alert'), h('span', {}, message)));
       return;
