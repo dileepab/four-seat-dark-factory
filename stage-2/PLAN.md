@@ -176,7 +176,7 @@ Every rule of stage 1 stands. Any rule below that fails is 422 `validation_faile
 ### 3.12 Export and import (S2)
 
 - `GET /_test/export`: `{"track": "pocketful", "format_version": 1, "state": {...}}` with `"schema": 2`. The state holds everything of schema 1 plus `authorization_ttl_seconds`, every authorization (all stored fields, including `created_at`, `closed_at`, `expires_at` exactly as stored, and `payment_ids`) and each payment's `authorization_id`. Built in one synchronous step.
-- `POST /_test/import` accepts `schema` 1 (an unchanged stage-1 export: TTL 600, no authorizations, every payment `authorization_id: null`, stored replay bodies kept verbatim) and `schema` 2. Any other schema, and any state that fails full validation, is 422 with nothing changed. Schema-2 validation adds: authorization fields as in section 3.11; `created_at` and `closed_at` (null or a timestamp); `payment_ids` naming existing payments whose `authorization_id` is that authorization; for every user, the open authorizations' remainders not above the user's `total`.
+- `POST /_test/import` accepts `schema` 1 (an unchanged stage-1 export: TTL 600, no authorizations, every payment `authorization_id: null`, stored replay bodies kept verbatim) and `schema` 2. Any other schema, and any state that fails full validation, is 422 with nothing changed. Schema-2 validation adds: authorization fields as in section 3.11; `created_at` and `closed_at` (null or a timestamp); `payment_ids` naming existing payments whose `authorization_id` is that authorization; for every user, the remainders of the open authorizations whose `expires_at` is after the import's time not above the user's `total`. Open authorizations already past their deadline hold nothing and are not counted: a payer may have spent that money after the deadline and before the export, so counting them would refuse a valid export.
 - After an import, everything of stage 1's 3.12 holds, and open authorizations keep expiring by the clock.
 
 ### 3.13 Concurrency model
@@ -319,7 +319,7 @@ Specification: stage-1 §10; stage-2 "Existing clients after an upgrade". Invari
 - W8.1 The export has `format_version` 1 and `state.schema` 2 with the TTL, every authorization (section 3.12 fields) and each payment's `authorization_id`; it is one snapshot; no plaintext password.
 - W8.2 A stage-2 round trip, in the same container and into a second one, keeps open, partially captured, captured, voided and expired authorizations, holds, `available`, `held`, capture payments and replays of authorization and capture keys; an open authorization whose deadline passes after the import expires by the clock.
 - W8.3 Upgrade: an unchanged export from a container built from the frozen `stage-1/` imports with 204; its tokens authenticate; logins work; `GET /me` shows `balance == total == available` and `held` 0; feeds and request lists match (ids, timestamps, order; payments now show `authorization_id: null`); replays of its keys return 200 with the stored stage-1 bodies unchanged; keys that failed are reusable; pending requests are payable; new authorizations work for imported users; new ids and timestamps never collide or go backwards.
-- W8.4 Rejected imports leave the destination unchanged: a schema other than 1 or 2, and schema-2 states with a dangling user, an unknown status, `captured_amount` above `amount`, a duplicate authorization id, an `expires_at` that is not RFC 3339, `payment_ids` naming a missing payment, or open remainders above the payer's total.
+- W8.4 Rejected imports leave the destination unchanged: a schema other than 1 or 2, and schema-2 states with a dangling user, an unknown status, `captured_amount` above `amount`, a duplicate authorization id, an `expires_at` that is not RFC 3339, `payment_ids` naming a missing payment, or unexpired open remainders above the payer's total. An export whose payer spent, after a hold's deadline passed, money that hold once reserved imports with 204.
 
 ### W9 UI foundation (builder)
 
@@ -398,6 +398,7 @@ Filled in once W12's first suite lands: each normative line of stage-2.md, and e
 
 | Handoff | To | Sent | Acknowledged | State |
 |---|---|---|---|---|
+| Stage-2 handoff, parts 1-14 (plan 46d9da6) | builder, verifier, critic | 09:13Z | — | sent |
 
 ## 8. Stage close
 
