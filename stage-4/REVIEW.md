@@ -201,3 +201,90 @@ On f4c2f9e, the clean run of `test_w20_batches.py`, `test_w20_concurrency.py` an
 - 70 mutants: the 67 above plus RC06 to RC08.
 - Each one now fails at least one acceptance or builder test for its reason. None survives both suites.
 - W19 at 2b3944a is APPROVED on suite 2f9c559.
+
+## W20 @ 9948ff9: BLOCKED
+
+- Commit: `9948ff97e99919ead98df10aa76b68dc956d8959`, the builder's HANDOFF W20, on top of W19 2b3944a.
+- Suite: `2f9c559d3b115636139619b801c11d99640d3caa` (W22.7). The verifier's PASS is on this commit and suite. The next suite commit, 8dac300, changes only `test_w17_export.py`.
+- Reason: 9948ff9 meets the plan in every probe, and I found no product defect. But the tests for one rule catch a break only when two writes happen to share a millisecond.
+  - BR06 below breaks batch step 14 (D100, D67).
+  - In one run it passes every W20 acceptance test. It also passes every builder test.
+- Missing evidence: a suite commit with a test that fails on BR06 whatever the timing (verifier). No product change is needed. On that commit I rerun BR06; the other results carry over.
+
+### What I checked
+
+1. **Every clause of the plan mapped to the code that enforces it.**
+   - Batch steps (3.9):
+     - step 1: `routes.ts:40`;
+     - step 2: `batches.ts:18`;
+     - step 3, the 403 before the key and the body: `batches.ts:20`;
+     - steps 4 to 6: `batches.ts:21-23`, with the key scoped by user, method and path (`idempotency.ts:37`);
+     - step 7, the shape, over every element before any item: `batches.ts:29-41`;
+     - step 8, each item in input order:
+       - (a) `batches.ts:47-48`, through `correctionFields`, stage 3's field rules with no tolerance on `effective_at`;
+       - (b) `:49-50`;
+       - (c) captures and refunds only: `:51-53`;
+       - (d) `:54-57`;
+       - (e) `:58-60`, where equal to the refunded total is allowed;
+       - there is no party check (D96);
+     - step 9: `batches.ts:70-77`, through `st.membersOf`. That index is filled in `addPayment` (`state.ts:311`), which the API (`ledger.ts:37`), the fixture (`fixture.ts:296`) and import (`snapshot.ts:241`) all use (D98);
+     - step 10: `batches.ts:78-86`, on exact instant keys;
+     - step 11: `batches.ts:90-101`, each wallet's combined difference against `available` now;
+     - step 12: `batches.ts:102-104`;
+     - step 13: `batches.ts:107-112`, every party of every item with all proposed revisions together (`historyStaysCovered` takes a map, `history.ts:69`);
+     - step 14: `batches.ts:115-131`:
+       - one `issue` gives `recorded_at`;
+       - a `cb_` id with 96 random bits, unique in the state (`state.ts:274-279`);
+       - revision n + 1 per item, with the batch id;
+       - the money moved;
+       - the response in input order;
+       - `idempotent` stores the key only after the step returns.
+   - D97: `corrections.ts:27` adds `correction_batch_id` only to a revision a batch recorded.
+   - A single correction of a settlement member is still 422 `linked_payment_immutable` (`corrections.ts:68`).
+   - 3.12: the batch's checks and its commit run in one synchronous step.
+   - Every clause has code. No product code special-cases a sample input, fixture id or expected output. `batches.ts` imports only local modules.
+2. **Probes.** `probe_w20.py` makes 70 checks. On 9948ff9: "0 failed" (`log_probe_w20_9948ff9.txt`). Among them:
+   - 32 items accepted and 33 refused;
+   - member instants that differ only in trailing zeros, in `Z` and `+05:30`, and 1 µs apart;
+   - `available` left at exactly 0, then one unit more, with a hold making the difference;
+   - a debit created first, moved onto the instant of a credit created after it;
+   - a dip between two items' instants;
+   - every pair of adjacent steps, with inputs that fail both, including 11/12 and 12/13;
+   - a replay after newer revisions;
+   - 12 concurrent batches with 12 distinct `recorded_at`.
+3. **Mutants.** 51 small changes (`gen_mutants_s4_w20.py`, plus BH05 in `mutants_s4_w20_extra.json`). Each one fails at least one probe check (`log_probe_mut_w20_v2.txt`).
+   - Acceptance, suite 1028890: `test_w20_batches.py`, `test_w20_concurrency.py` and `test_w2_idempotency.py`, `--upto 20`, `-m "not container"`, with the two tests that contradicted the plan deselected.
+     - 47 are killed. I read each failure for its reason (`classify.py`, `rerun_logs_s4/`).
+     - Survivors: BF08, BC07, BR06, BH05.
+   - Acceptance, suite 2f9c559, the same files with nothing deselected:
+     - The clean run: "293 passed".
+     - BF08 (the guard before the funds) fails `test_the_combined_funds_come_before_the_guard`: "expected 409 insufficient_funds, got 422 validation_failed".
+     - BH05 (history before the guard) fails `test_the_guard_comes_before_history`: "expected 422 validation_failed, got 409 historical_overdraft".
+     - BC07 (seeded members missed) fails `test_members_of_a_seeded_settlement`: "expected 422 incomplete_settlement, got 201".
+     - BR06: see below. Logs are in `rerun_logs_s4_2f9c559/`.
+   - Builder tests: the clean run gives "tests 243, pass 243". 43 are killed (`log_builder_w20_0.txt`).
+     - Survivors: BI08, BI11, BC02, BF08, BH03, BR06, BR10, BH05.
+     - Each of them except BR06 dies in the acceptance suite for its reason.
+4. **The other mandate checks.**
+   - Atomic: BX01 (expected revisions read before an await) dies, with two overlapping batches both 201, and 50 batches all 201.
+   - A rejected batch changes nothing and claims no key: BR09 dies.
+   - Keys are per path: BR10 dies in `test_same_key_on_the_ten_paths_is_independent`.
+   - The handoff names one gap: exports stay schema 3 until W21, so a round trip drops `correction_batch_id`. I agree. It is W21's.
+
+### The survivor and the missing test
+
+**BR06, batch step 14 (D100, D67): `recorded_at` is the request's clock reading, not an issued timestamp.**
+- Change: in `batches.ts:115`, `issue(st, now)` becomes `now.ts`. The clock never runs backwards, but a batch's `recorded_at` can then equal the timestamp of the write before it, and two batches in one millisecond share one.
+- Passing output:
+  - suite 1028890, the W20 files: "289 passed, 2 deselected in 52.62s" (`rerun_logs_s4/BR06.txt`). The four tests that caught BR06 on 2f9c559 are unchanged since 1028890, and so is `support.py`;
+  - the builder tests: "tests 243, pass 243" (`rerun_logs_builder/BR06.txt`). That includes "gives two batches in one millisecond strictly increasing recorded_at", whose two batches landed in different milliseconds.
+- On 2f9c559, the W20 files failed with BR06 in 13 of 13 runs, with one to three other test runs beside them.
+  - Each run failed 1 to 4 tests, and every failure was two writes in one millisecond: I56 ("recorded_at values strictly increase"), or b1 < b2 < b3.
+  - So the kill depends on timing, not on the rule. A slower host, or a container's longer round trip, makes the coincidence rarer.
+- `probe_w20.py` fails on BR06 in 6 of 6 runs with "D100 12 concurrent batches: 12 distinct recorded_at". A burst reaches the service faster than one millisecond per request, whatever the round trip.
+- A test that would close it: make 20 payments, then correct each one in its own batch, all 20 batches at once (`Service.burst`). Expect 20 distinct `recorded_at` values, each strictly later than its payment's `created_at`. Stage 3's 3.5 says "two writes never share a `created_at` or `recorded_at`" (D67), and D100 applies it to batches.
+- The same pattern already exists for refunds:
+  - The builder's test at `w19-refunds.test.ts:395` sends 50 concurrent refunds and asserts "one timestamp each".
+  - RF46 makes the same change for refunds. It passed `test_w19_refunds.py` and `test_w19_concurrency.py` in 3 of 3 runs on 2f9c559 under load (`rerun_logs_s4_2f9c559/RF46r1-3.txt`).
+  - That builder test kills RF46 in 6 of 6 runs for its reason (`log_builder_rf46.txt`), so the W19 count stands.
+  - An acceptance burst for refunds would be cheap in the same commit, but W19 does not need it.
