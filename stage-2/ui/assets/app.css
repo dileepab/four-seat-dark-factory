@@ -401,6 +401,19 @@ input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); ou
 .facts dt { color: var(--muted); }
 .facts dd { overflow-wrap: anywhere; }
 .facts .expiry { flex-basis: 100%; }
+/* A row under an item's main line and amount, as wide as the item: facts, controls, messages. */
+.item-row { flex: 1 1 100%; min-width: 0; }
+/* An RFC 3339 instant stays on one line (W13.2); a seeded one too long for the card scrolls
+   inside its own box, never the page. The human time goes beside it, or below as one piece. */
+.mono.instant {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: bottom;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.human-time { display: inline-block; white-space: nowrap; }
 
 .capture { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s2); margin-top: var(--s2); }
 .capture .field { flex: 1 1 140px; }

@@ -65,6 +65,7 @@ export function holdsScreen(main, ctx) {
   const inFlight = new Set(); // authorization ids with a capture or void on the way
   const captures = new Map(); // id -> { text, edited, identity }: the capture inputs survive re-renders
   let pending = null; // { id, expect } after an unknown outcome: resolved when a re-read shows it
+  let concerns = null; // the id of the hold the latest action's messages are about
 
   const reload = () => loads.loadAll('me', 'list');
   loads.add('me', () => call('GET', '/me'), (data) => {
@@ -101,7 +102,9 @@ export function holdsScreen(main, ctx) {
     const state = captureState(a);
     const parsed = parseAmount(state.text, me.minor_units);
     if (parsed.error) {
+      concerns = a.authorization_id;
       actions.set({ error: parsed.error });
+      render();
       return;
     }
     const { key, body } = state.identity.submission({ amount: parsed.value });
@@ -111,6 +114,7 @@ export function holdsScreen(main, ctx) {
 
   async function act(id, expect, send) {
     inFlight.add(id);
+    concerns = id;
     render();
     const outcome = await send();
     inFlight.delete(id);
@@ -146,7 +150,7 @@ export function holdsScreen(main, ctx) {
       });
       const form = h('form', { class: 'capture', novalidate: true },
         field('Amount to collect', input),
-        h('button', { type: 'submit', testid: `authorization-capture-${id}`, class: 'button small', disabled: busy }, 'Capture'));
+        h('button', { type: 'submit', testid: `authorization-capture-${id}`, class: 'button small', disabled: busy }, 'Collect'));
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         if (!inFlight.has(id)) capture(a);
@@ -165,32 +169,40 @@ export function holdsScreen(main, ctx) {
           h('span', { class: 'direction' }, outgoing ? 'You are holding for' : 'Held for you by'),
           statusBadge(a.status), a.visibility === 'private' ? privateBadge() : null),
         h('p', { class: 'parties' }, party(outgoing ? a.to_handle : a.from_handle, me)),
-        a.note ? h('p', { class: 'note' }, a.note) : null,
-        h('dl', { class: 'facts' },
-          h('div', {}, h('dt', {}, 'Captured'), h('dd', {},
-            a.status === 'captured'
-              ? h('span', { testid: `authorization-captured-${id}`, class: 'amount' }, money(a.captured_amount))
-              : h('span', { class: 'amount' }, money(a.captured_amount)))),
-          h('div', {}, h('dt', {}, 'Still held'), h('dd', {}, h('span', { class: 'amount' }, money(a.remaining_amount)))),
-          h('div', { class: 'expiry' }, h('dt', {}, open ? 'Expires' : 'Expiry'), h('dd', {},
-            h('span', { testid: `authorization-expires-${id}`, class: 'mono' }, a.expires_at),
-            ' ', h('span', { class: 'muted' }, '(', timeEl(a.expires_at), ')')))),
-        controls),
+        a.note ? h('p', { class: 'note' }, a.note) : null),
       h('p', { class: 'item-amount' },
-        h('span', { testid: `authorization-amount-${id}`, class: 'amount' }, money(a.amount))));
+        h('span', { testid: `authorization-amount-${id}`, class: 'amount' }, money(a.amount))),
+      // Full-width rows under the item, so the expiry text has the card's width (W13.2).
+      h('dl', { class: 'facts item-row' },
+        h('div', {}, h('dt', {}, 'Captured'), h('dd', {},
+          a.status === 'captured'
+            ? h('span', { testid: `authorization-captured-${id}`, class: 'amount' }, money(a.captured_amount))
+            : h('span', { class: 'amount' }, money(a.captured_amount)))),
+        h('div', {}, h('dt', {}, 'Still held'), h('dd', {}, h('span', { class: 'amount' }, money(a.remaining_amount)))),
+        h('div', { class: 'expiry' }, h('dt', {}, open ? 'Expires' : 'Expiry'), h('dd', {},
+          h('span', { testid: `authorization-expires-${id}`, class: 'mono instant' }, a.expires_at),
+          ' ', h('span', { class: 'muted human-time' }, '(', timeEl(a.expires_at), ')')))),
+      controls ? h('div', { class: 'item-row' }, controls) : null);
   }
 
   function render() {
     if (!me || !items) return;
+    // An action's messages sit at the hold they concern, or above the list when it is not shown.
+    const atItem = items.some((a) => a.authorization_id === concerns);
+    const itemWithMessages = (a) => {
+      const li = item(a);
+      if (atItem && a.authorization_id === concerns) li.append(h('div', { class: 'item-row' }, actions.region));
+      return li;
+    };
     keepFocus(() => fill(listSection,
       h('div', { class: 'section-head' }, h('h2', { id: 'holds-title' }, 'Your holds')),
-      actions.region,
+      atItem ? null : actions.region,
       items.length === 0
         ? h('div', { testid: 'empty-authorizations', class: 'empty-state' },
           h('p', {}, 'No holds yet.'),
           h('p', { class: 'muted' }, 'Place a hold to reserve money for someone; holds others place for you appear here too.'))
         : null,
-      h('ul', { testid: 'authorization-list', class: 'list' }, items.map(item))));
+      h('ul', { testid: 'authorization-list', class: 'list' }, items.map(itemWithMessages))));
   }
 
   main.append(
