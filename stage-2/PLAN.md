@@ -10,7 +10,7 @@ Frozen reference: `/Users/Dileepa/dark-factory-v3/stage-1/` with its `PLAN.md`, 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
 | W7 | builder | Holds API: `GET /me` money fields, authorizations, capture, void, list, expiry, funds judged on `available` | BLOCKED (PASS @ 16adbc0, suite cb62939; critic BLOCKED: X15, a reset keeping a clock that ran ahead, untested; test owed by the verifier, no product change) | 16adbc0 |
-| W8 | builder | Export schema 2 and import of stage-1 exports (upgrade) | HANDED_OFF @ 54acbcd (builder gate: npm test, offline build, suite cb62939 --upto 8 with one suite defect named, 8 builder mutants killed) | 54acbcd |
+| W8 | builder | Export schema 2 and import of stage-1 exports (upgrade) | VERIFIED (PASS @ 54acbcd, suite 62c4a4e: 1488 passed --upto 8; npm test 137/137; supplied stage 1 147/147); awaiting critic | 54acbcd |
 | W9 | builder | UI foundation: HTML routes, shell, visual system, signup, login, logout, navigation | PLANNED | — |
 | W10 | builder | Wallet screen `/`: wallet numbers, pay and request forms, activity feed, refresh, uncertain outcomes, upgrade | PLANNED | — |
 | W11 | builder | Requests, split and holds screens | PLANNED | — |
@@ -543,7 +543,8 @@ Each normative line of stage-2.md, condensed (S1-S130), with the acceptance test
 | Liveness resend to critic: stage-2 handoff part 1 (plan review, then W7 review) | critic | 09:36Z | critic 09:36Z: all parts and revisions received; plan review, then W7 | acknowledged |
 | Critic plan review @ 736690c (8 defects, 3 gaps, 3 recommendations; REVIEW.md df4b697) -> plan revision: D43 (4 s, abort), D46 (authorize form on `/` too), D50, D64, D65, I34, I46, I48, 3.5-3.14, W7.3, W7.6, W7.9, W8.2, W9.2, W9.6, W10.3-W10.5, W11.1-W11.4 | builder, verifier, critic | 09:41Z | — | sent |
 | HANDOFF W7 @ 16adbc0 (builder) | verifier, critic | 09:54Z | verifier PASS 10:07Z (suite cb62939) | critic BLOCKED 10:24Z (X15 test gap; REVIEW.md 7e9b3df) |
-| HANDOFF W8 @ 54acbcd (builder) | verifier, critic | 10:13Z | — | awaiting verdicts |
+| W7 block X15: tests owed (verifier acceptance tests; builder tests 5f9781a already kill X15 and the deadline mutants) | verifier, critic | 10:28Z | builder 5f9781a | suite 5e17085 10:34Z: X15 killed on 16adbc0 and 54acbcd, H04/H04b/C06d killed on 54acbcd, PASS carried over (tests-only delta); awaiting critic rerun |
+| HANDOFF W8 @ 54acbcd (builder) | verifier, critic | 10:13Z | verifier PASS 10:28Z (suite 62c4a4e) | awaiting critic |
 
 ## 8. Stage close
 
