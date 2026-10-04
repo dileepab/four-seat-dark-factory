@@ -10,7 +10,7 @@ Frozen references: `stage-1/` (accepted at 4baf8d9), `stage-2/` (accepted at f9e
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
 | W19 | builder | Refunds: `POST /payments/{id}/refunds`, `refund_of` on every payment, corrections bounded by refunds | ACCEPTED @ 2b3944a: PASS (verifier, suite 1028890, --upto 19, 16:59Z; carried over to suite 2f9c559, the touched tests on 2b3944a "179 passed, 137 deselected") and APPROVED (critic, suite 2f9c559, REVIEW.md c96e691, 17:21Z: 70 mutants, none survives). Earlier BLOCKED at 1028890 (c8f7dd3: RF18 untested), cleared by W22.7 | 2b3944a |
-| W20 | builder | Batch corrections: `POST /correction-batches`, settlement members, combined funds and history | VERIFIED: PASS at 9948ff9, suite 2f9c559, --upto 20 (17:36Z), carried over to suite 8dac300 (its one touched file, test_w17_export, "25 passed" on 9948ff9); awaiting the critic's review | 9948ff9 |
+| W20 | builder | Batch corrections: `POST /correction-batches`, settlement members, combined funds and history | VERIFIED: PASS at 9948ff9, suite 2f9c559, --upto 20 (17:36Z), carried over to suite 8dac300 (its one touched file, test_w17_export, "25 passed" on 9948ff9). BLOCKED at 9948ff9, suite 2f9c559 (critic, REVIEW.md abe0ce2, 17:53Z): BR06, a batch recorded_at taken from the clock rather than issued, is caught only when two writes share a millisecond; no product defect. The suite owes W22.8, then the critic reruns BR06; the builder owes nothing | 9948ff9 |
 | W21 | builder | Export schema 4; import of stage-1, stage-2, stage-3 and stage-4 exports; RUN.md | BUILDING (f4c2f9e) | f4c2f9e |
 | W22 | verifier | Stage-4 acceptance suite: stage-1 to stage-3 regression, refunds, batches, upgrade | BUILDING (first suite 1028890 at 16:23Z; trace F1-F43 filled from it at 16:25Z, every row has tests; 328508d, a W21 import probe; W22.7 at 2f9c559, 17:06Z; 101 trace names checked against 2f9c559; 8dac300, 17:50Z: the schema-3 import probe of a snapshot cutoff reads schema 4) | 8dac300 |
 
@@ -207,6 +207,9 @@ Specification: all of `stage-4.md`, and `stage-1.md` to `stage-3.md` as they sti
   Two W20 expectations corrected to the plan:
   - after the input-order batch, Cy holds 530: 500 + 50 - 20, then +10 and -10;
   - a one-member seeded settlement is shown complete by a 201 that Cy pays for. Lowering p_one debits Dee, who holds 0, so it is 409 `insufficient_funds` (I74, D99).
+- W22.8 (critic's W20 review, abe0ce2; planner decision 17:55Z) Concurrent writes never share a timestamp (stage-3 3.5, D67, D100). Each test fails on a copy that takes its timestamp from the clock rather than issuing it, in every run, whatever the timing:
+  - 20 payments, each corrected in its own batch, the 20 batches sent at once: 20 x 201, 20 distinct `recorded_at`, each strictly later than its payment's `created_at` (the critic's BR06 case);
+  - 20 distinct payments refunded at once: 20 x 201, 20 distinct `created_at`, each strictly later than its target's `created_at` (RF46, today killed only by the builder tests).
 
 ## 5. Decisions
 
@@ -298,6 +301,8 @@ Each normative line of stage-4.md, condensed (F1–F43), with the acceptance tes
 | Critic: W19 @ 2b3944a APPROVED, suite 2f9c559 (REVIEW.md c96e691). RF18 fails test_the_guard_comes_after_the_403_the_cap_and_the_funds for its reason; RC07 and RC08 fail the correction-order tests; clean "318 passed, 15 deselected"; 70 mutants, none survives. W20: the four survivors on 1028890 die on 2f9c559 (BR06 being checked for timing) | planner, verifier | 17:21Z | planner (REVIEW.md and rerun logs read) | W19 ACCEPTED @ 2b3944a |
 | Verifier: W20 @ 9948ff9 PASS, suite 2f9c559, --upto 20, clean worktree. Offline build and run; npm "tests 243, pass 243, fail 0"; acceptance "2850 passed, 29 deselected" (container tests, P, Q, R, the W22.7 tests, 96 screenshots); harness host s4-v03 and isolated s4-v04 at 9948ff9: every stage passes (147, 35, 6, 5), highest contiguous 4 | planner, critic, builder | 17:36Z | planner (report.json, acceptance.txt and npm.txt read) | PASS |
 | Verifier: suite 8dac300, one test only (+2 lines): test_w17_export's probe "snapshot cutoff beyond the sequence" now finds the cutoff in a schema-4 snapshot record, which also keeps the payment form (D106). Its own defect; the product is right. On 328508d --upto 21 the whole suite on 2f9c559 gave "1 failed, 2869 passed", the 1 being this probe; on 8dac300 test_w17_export gives "25 passed" on 328508d and on 9948ff9; the probe fails on a copy without the cutoff check | planner, critic, builder | 17:50Z | planner (diff read) | tests only: W20's PASS carries over |
+| Critic: W20 @ 9948ff9 BLOCKED, suite 2f9c559 (REVIEW.md abe0ce2). No product defect; 50 of 51 mutants are killed for their reason. BR06 (batches.ts:115, `issue(st, now)` replaced by `now.ts`) passes the W20 files on 1028890 and every builder test; on 2f9c559 its 13 of 13 kills were two writes in one millisecond. W19 note: RF46, the same change for refunds, dies only in the builder's 50-refund burst | planner, verifier | 17:53Z | planner | taken |
+| Planner decision -> W22.8: concurrent batches (the critic's case) and concurrent refunds get distinct, strictly later timestamps. The touched tests run on 9948ff9 (W20's verdict carries over) and on 2b3944a; the critic reruns BR06 on the new suite commit | verifier, critic | 17:55Z | — | sent |
 
 ## 8. Stage close
 
