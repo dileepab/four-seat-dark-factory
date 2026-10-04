@@ -309,3 +309,82 @@ On f4c2f9e, the clean run of `test_w20_batches.py`, `test_w20_concurrency.py` an
 
 - 51 mutants. Each one fails at least one acceptance test for its reason, and BR06's kill no longer depends on timing.
 - W20 at 9948ff9 is APPROVED on suite da8d92b.
+
+## W21 @ 328508d: BLOCKED
+
+- Commit: `328508d01e35040e46f6d76317cc3c9c258453b0`, the builder's HANDOFF W21. It is the W21 product, f4c2f9e, plus a builder-test fix; its `src/` is byte for byte f4c2f9e's.
+- Suites:
+  - the export files on 8dac300;
+  - the upgrade files on 2f9c559. They are unchanged through da8d92b, the suite of the verifier's W21 run.
+- Reason: 328508d meets the plan in every probe, and I found no product defect. But two schema-4 import rules have no test. An import that accepts a payment without `refund_of`, or a revision without `correction_batch_id`, as if the field were null passes every acceptance and builder test.
+- Missing evidence: a suite commit with tests that fail on VA14 and VA15 below (verifier). No product change is needed. On that commit I rerun VA14 and VA15; the other results carry over.
+
+### What I checked
+
+1. **Every clause of the plan mapped to the code that enforces it** (`snapshot.ts` and `statement.ts` at 328508d).
+   - Export (3.11, W21.1):
+     - schema 4: `snapshot.ts:27`;
+     - `refund_of`: `:54`;
+     - `correction_batch_id` on every revision: `:57`;
+     - each snapshot's `payment_form`: `:84`;
+     - the idempotency records of every path, the two new ones included: `:86`;
+     - built in one synchronous function.
+   - Import (3.11, W21.2, W21.3):
+     - schemas 1 to 4: `:198-201`;
+     - schemas 1 to 3 import by stage 3's rules: `refund_of` null (`:273`), no batch ids (`revisionsOf` gets no batch map), and their snapshots in form 3 (`:423`).
+   - Schema-4 validation (3.11, W21.4):
+     - `refund_of` is null or a string (`:264`). It must name an earlier payment that is not a refund (`:286-287`), with the parties reversed (`:288-289`). A refund links to no request, authorization or settlement (`:290-291`);
+     - a refund or a capture has one revision: `:277-279`;
+     - each payment's refunded total is at most its latest amount: `:295-297`;
+     - one batch id has one `recorded_at` (`:175`), at most one revision per payment (`:176`), and never revision 1 (`:169`);
+     - `payment_form` is 3 or 4: `:419`;
+     - idempotency records of any path are taken as stored: `:427-438`.
+   - After an import, these are rebuilt: refunded totals (`:293`), settlement members (`addPayment`), batch ids (`:299`) and the clock (`:217-223`).
+   - D106: `statement.ts:55` makes new snapshots form 4. `:85` drops `refund_of` from a form-3 snapshot's payments.
+   - RUN.md (W21.5) covers the image and paths, `npm test`, the acceptance suite and the supplied checks with `--stage 4`. It names the repository root the same way stage 3's did.
+   - Every clause has code. No product code special-cases a sample input, fixture id or expected output. `snapshot.ts` imports only local modules.
+2. **Probes.** `probe_w21.py` makes 42 checks. On 328508d: "0 failed" (`log_probe_w21_328508d_v2.txt`). Among them:
+   - the round trip in one process and into a second;
+   - the D106 upgrade through the frozen stage-3 build, with a token paged before and after;
+   - every W21.4 invalid state;
+   - one level below them, the missing-field cases: `refund_of`, and `correction_batch_id` on a revision 1 and on a batch revision.
+3. **Mutants.** 27 small changes (`gen_mutants_s4_w21.py`, plus VA15 in `mutants_s4_w21_extra.json`).
+   - Each fails a probe check except VA10, which is equivalent. A second revision of one batch on one payment always fails the shared-`recorded_at` check first (`:175` before `:176`), because a payment's `recorded_at` values strictly increase.
+   - Acceptance, `--upto 21`, `-m "not container"`:
+     - the export files on 8dac300 (`test_w21_export.py`, `test_w5_export_import.py`, `test_w8_export_import.py`, `test_w17_export.py`): clean "111 passed";
+     - the upgrade files on 2f9c559 (`test_w21_upgrade.py`, `test_w17_upgrade.py`, `test_w8_upgrade.py`), run one at a time against the frozen stage-1 to stage-3 services: clean "25 passed";
+     - 21 are killed. I read each failure for its reason (`rerun_logs_s4_8dac300/`, `rerun_logs_s4_2f9c559/*_B.txt`). Each VA mutant fails exactly its own case of `test_rejected_schema_4_import_changes_nothing`;
+     - survivors: VA05, VA10, VA11, VA12, VA14, VA15;
+     - on 2f9c559, the clean run of the export files was "1 failed, 110 passed". The failure is the schema-3 probe the verifier fixed in 8dac300. I counted that test for no mutant.
+   - Builder tests at 328508d:
+     - the clean run: "tests 248, pass 248";
+     - 24 are killed. VA05, VA11 and VA12 die in `w21-export.test.ts:251` ("are 422 and change nothing"). Each of them removes one check, so the 204 can only come from that check's own case;
+     - survivors: VA10, VA14, VA15.
+4. **The other mandate checks.** The export runs in one synchronous step. An import validates the whole state before it replaces the old one, so a rejected import changes nothing (W21.4, tested for every case above).
+
+### The survivors and the missing tests
+
+**VA14 (3.11): a schema-4 payment without a `refund_of` field is accepted as if `refund_of` were null.**
+- Change: `snapshot.ts:264` also accepts a missing field (`p.refund_of === undefined || isRef(p.refund_of)`), and `:276` and `:277` compare with `!= null` and `== null`.
+- The rule: 3.11 says the schema-4 state "holds everything of schema 3 plus each payment's `refund_of`", and schema-4 validation requires that `refund_of` "is null or names an earlier payment". A payment without the field fails full validation: 422, with nothing changed.
+- Passing output:
+  - the export files on 8dac300: "111 passed";
+  - the upgrade files: "25 passed";
+  - the builder tests: "tests 248, pass 248".
+- `probe_w21.py`, "W21.4 a schema-4 payment without refund_of: 422 and nothing changed", passes on 328508d and fails on VA14 (204).
+- The suite's cases set `refund_of` to an unknown payment, a refund or a later payment, and the builder's set it to 5. None removes it.
+
+**VA15 (3.11): a schema-4 revision without a `correction_batch_id` field is accepted as if the field were null.**
+- Change: `snapshot.ts:169`, `o.correction_batch_id === null`, becomes `== null`; `:171` falls back with `?? null`.
+- The rule: 3.11 says the state holds "each revision's `correction_batch_id` (null when no batch recorded it)".
+- Under VA15, a batch revision without its id imports as an ordinary correction, and the batch silently loses that member.
+- Passing output:
+  - the export files on 8dac300: "111 passed";
+  - the upgrade files: "25 passed";
+  - the builder tests: "tests 248, pass 248".
+- `probe_w21.py`, "a schema-4 batch revision without correction_batch_id" and "a schema-4 revision 1 without correction_batch_id", pass on 328508d and fail on VA15 (204).
+
+**Tests that would close both.** Start from a schema-4 export that holds a refund and a batch, and make three imports, each expected to be 422 with nothing changed:
+1. without `refund_of` on one payment;
+2. without `correction_batch_id` on a batch revision;
+3. without `correction_batch_id` on a revision 1.
