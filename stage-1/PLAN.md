@@ -462,4 +462,4 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
 | Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) and verdict scope (section 0) | builder, verifier, critic | 06:53Z | — | sent |
 | HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | verified and approved at 2ffcbe8 instead (1bd9c8d lacks D34/D35) | ACCEPTED |
-| HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (M49), verifier test ee19494, critic APPROVED W1+W2 (REVIEW.md 493fc0c); verifier PASS W1+W2 07:03Z | awaiting critic |
+| HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | critic BLOCKED W1+W2 07:16Z (M49), verifier test ee19494, critic APPROVED W1+W2 (REVIEW.md 493fc0c); verifier PASS W1+W2 07:03Z | ACCEPTED |
