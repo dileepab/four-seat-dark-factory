@@ -15,6 +15,7 @@ import pytest
 
 from support import (EPOCH, FAR_FUTURE, RESET_TIMEOUT, Snapshot, batch_item as item, describe, error_code, expect,
                      expect_error, fixture, instant, new_key, no_failures, read_statement, shifted, snapshot_pages, user)
+from test_w17_export import _snapshot_record
 from test_w8_export_import import _swap
 
 pytestmark = pytest.mark.item(21)
@@ -256,6 +257,45 @@ def _link(state, linked: dict, link_value: str, payment: dict) -> None:
     assert n, f"no record of {payment['payment_id']} has a null {sorted(fields)}; this probe cannot run"
 
 
+def _drop(state, field_of: tuple, field_value, target: tuple, skip=()) -> None:
+    """Remove the field that the records holding all of `field_of` keep `field_value` in (refund_of, or
+    correction_batch_id) from every record holding all of `target` that has it, except records equal to one of
+    `skip` (a stored 201 body, which only a replay reads): a schema-4 state with that field missing."""
+    fields = {k for rec in _records_holding_all(state, field_of) for k, v in rec.items()
+              if type(v) is type(field_value) and v == field_value}
+    assert fields, f"no record holding {field_of} keeps {field_value}; this probe cannot run"
+    n = 0
+    for rec in _records_holding_all(state, target):
+        if any(rec == x for x in skip):
+            continue
+        for k in fields & set(rec):
+            del rec[k]
+            n += 1
+    assert n, f"no record holding {target} has {sorted(fields)}; this probe cannot run"
+
+
+def _fill(state, field_of: tuple, field_value, target: tuple, value, skip=()) -> None:
+    """Set the field that the records holding all of `field_of` keep `field_value` in to `value`, in every record
+    holding all of `target` that has it as null, except records equal to one of `skip` (a stored 201 body)."""
+    fields = {k for rec in _records_holding_all(state, field_of) for k, v in rec.items()
+              if type(v) is type(field_value) and v == field_value}
+    assert fields, f"no record holding {field_of} keeps {field_value}; this probe cannot run"
+    n = 0
+    for rec in _records_holding_all(state, target):
+        if any(rec == x for x in skip):
+            continue
+        for k in fields & set(rec):
+            if rec[k] is None:
+                rec[k] = value
+                n += 1
+    assert n, f"no record holding {target} has a null {sorted(fields)}; this probe cannot run"
+
+
+def _fresh(v: str) -> str:
+    """An id of the same form as `v` that names nothing in the state."""
+    return v[:-4] + ("zzzz" if v[-4:] != "zzzz" else "yyyy")
+
+
 def corrupt(body: dict, rich: dict, how: str) -> dict:
     body = copy.deepcopy(body)
     state = body["state"]
@@ -281,6 +321,27 @@ def corrupt(body: dict, rich: dict, how: str) -> dict:
         assert recs, "no record holds the batch revision of b2; this probe cannot run"
         for r in recs:
             _swap(r, rec, shifted(rec, 1_000, digits=3))
+    elif how == "a payment without refund_of":
+        late = s["late"]                                           # ada -> bob 900, refund_of null
+        _drop(state, (r1["payment_id"], p), p, (late["payment_id"],), skip=(late,))
+    elif how == "a batch revision without correction_batch_id":
+        cb = s["batch"]["correction_batch_id"]
+        _drop(state, ("zz-b-2", cb), cb, ("zz-b-2", cb), skip=tuple(s["batch"]["revisions"]))
+    elif how == "a revision 1 without correction_batch_id":
+        cb, b1 = s["batch"]["correction_batch_id"], s["b1"]         # b1: bob -> cy 100, revision 2 by the batch
+        _drop(state, ("zz-b-2", cb), cb, (b1["created_at"], 100), skip=(b1,))
+    elif how == "a refund linked to a settlement":
+        m0 = s["st"]["payments"][0]                                 # a member: its settlement_id names the field
+        _fill(state, (m0["payment_id"], m0["settlement_id"]), m0["settlement_id"], (r1["payment_id"],),
+              _fresh(m0["settlement_id"]), skip=(r1,))
+    elif how == "a revision 1 with a correction_batch_id":
+        cb, b1 = s["batch"]["correction_batch_id"], s["b1"]         # a batch id of its own: no other rule breaks
+        _fill(state, ("zz-b-2", cb), cb, (b1["created_at"], 100), _fresh(cb), skip=(b1,))
+    elif how == "a snapshot payment form of 5":
+        rec = _snapshot_record(state, rich["snaps"]["bob"].snapshot)
+        forms = [k for k, v in rec.items() if type(v) is int and v == 4]     # made by stage 4: form 4 (D106)
+        assert len(forms) == 1, f"the snapshot record has {len(forms)} integer fields equal to 4; this probe cannot run"
+        rec[forms[0]] = 5
     elif how.startswith("schema "):
         state["schema"] = json.loads(how.split(" ", 1)[1])
     else:
@@ -291,6 +352,13 @@ def corrupt(body: dict, rich: dict, how: str) -> dict:
 REJECTS = ["refund_of an unknown payment", "refund_of a refund", "refund_of a later payment",
            "refund parties not the target's reversed", "refunds above the target's latest amount",
            "a refund with two revisions", "a capture with two revisions", "one batch id with two recorded_at",
+           # PLAN 3.11: the state holds each payment's refund_of and each revision's correction_batch_id (null when
+           # no batch recorded it), so a missing field is not a null one (critic's W21 review, VA14 and VA15)
+           "a payment without refund_of", "a batch revision without correction_batch_id",
+           "a revision 1 without correction_batch_id",
+           # PLAN 3.11: a refund links to no request, authorization or settlement; revision 1 has no batch id; a
+           # snapshot's payment form is 3 or 4 (planner's W22.9: VA05, VA11, VA12)
+           "a refund linked to a settlement", "a revision 1 with a correction_batch_id", "a snapshot payment form of 5",
            "schema 5", "schema 0"]
 
 
