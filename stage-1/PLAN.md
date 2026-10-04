@@ -8,8 +8,8 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 
 | Item | Owner | Title | State | Commit |
 |---|---|---|---|---|
-| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | HANDED_OFF (replaces 99d2431; commit also carries W2) | 2ffcbe8 |
-| W2 | builder | Idempotency engine, payments, activity feed | HANDED_OFF | 1bd9c8d |
+| W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | VERIFIED (PASS @ 2ffcbe8, suite c989868); awaiting critic | 2ffcbe8 |
+| W2 | builder | Idempotency engine, payments, activity feed | VERIFIED (PASS @ 2ffcbe8, suite c989868); awaiting critic | 2ffcbe8 |
 | W3 | builder | Requests and splits | BUILDING | — |
 | W4 | builder | Settlements | PLANNED | — |
 | W5 | builder | Export and import | PLANNED | — |
@@ -461,5 +461,5 @@ Each normative line of stage-1.md, condensed, with the acceptance tests that exe
 | Stage-1 handoff, parts 1-9 (plan 8dd27a4) | builder, verifier, critic | 06:36Z | critic (plan review), verifier (W6), builder (W1), all by 06:40Z | acknowledged |
 | HANDOFF W1 @ 99d2431 (builder) | verifier, critic | 06:47Z | — | awaiting verifier run (suite W6 in progress) |
 | Plan revision after critic plan review (I9, D24, D33-D35, 3.1, 3.2, 3.11, 3.13, W1.3, W1.4) and verdict scope (section 0) | builder, verifier, critic | 06:53Z | — | sent |
-| HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | — | awaiting verifier run |
-| HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | — | awaiting verifier run |
+| HANDOFF W2 @ 1bd9c8d (builder) | verifier, critic | 06:55Z | verified at 2ffcbe8 instead (1bd9c8d lacks D34/D35) | awaiting critic |
+| HANDOFF W1 @ 2ffcbe8 (builder; replaces 99d2431, adds D33-D35, carries W2) | verifier, critic | 06:57Z | verifier PASS W1+W2 07:03Z | awaiting critic |
