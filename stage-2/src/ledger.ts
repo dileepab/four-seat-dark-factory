@@ -19,6 +19,7 @@ export interface Transfer {
   visibility: Visibility;
   requestId: string | null;
   settlementId: string | null;
+  authorizationId: string | null;
   createdAt: string;
 }
 
@@ -41,6 +42,7 @@ export function recordPayment(st: State, t: Transfer): Payment {
     visibility: t.visibility,
     requestId: t.requestId,
     settlementId: t.settlementId,
+    authorizationId: t.authorizationId,
     createdAt: t.createdAt,
     seq: nextSeq(st),
   };

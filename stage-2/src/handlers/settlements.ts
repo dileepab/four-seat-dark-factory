@@ -7,7 +7,7 @@ import { amountValue, optionalNote, optionalVisibility } from '../fields.ts';
 import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { has, isObject, type JsonObject } from '../json.ts';
 import { recordPayment, type Transfer } from '../ledger.ts';
-import { MAX_BALANCE, newId, nextSeq, nextTs, store, type State, type User } from '../state.ts';
+import { availableOf, clock, MAX_BALANCE, newId, nextSeq, store, type State, type User } from '../state.ts';
 import { paymentView } from '../views.ts';
 
 const MAX_TRANSFERS = 32;
@@ -26,7 +26,7 @@ function readTransfer(st: State, entry: JsonObject, i: number): Omit<Transfer, '
   const to = st.usersByHandle.get(toHandle);
   if (!to) throw notFound(`transfers[${i}]: no user has the handle ${toHandle}`);
   if (from.id === to.id) throw new ApiError(422, 'self_payment', `transfers[${i}] pays its own sender`);
-  return { from, to, amount, note, visibility, requestId: null };
+  return { from, to, amount, note, visibility, requestId: null, authorizationId: null };
 }
 
 function handleField(entry: JsonObject, name: string, i: number): string {
@@ -53,14 +53,18 @@ export function createSettlement(ctx: Ctx): Result {
     });
     const transfers = entries.map((entry, i) => readTransfer(st, entry, i));
 
-    // Net position per wallet: every wallet must end at or above 0 and at or below 2^53.
+    // Net position per wallet: every wallet's available funds must cover its net debit (D53),
+    // and its total must stay at or below 2^53.
     const net = new Map<User, number>();
     for (const t of transfers) {
       net.set(t.from, (net.get(t.from) ?? 0) - t.amount);
       net.set(t.to, (net.get(t.to) ?? 0) + t.amount);
     }
+    const now = clock(st);
     for (const [user, change] of net) {
-      if (user.balance + change < 0) throw conflict('insufficient_funds', `${user.handle} cannot cover the settlement`);
+      if (availableOf(st, user, now.ms) + change < 0) {
+        throw conflict('insufficient_funds', `${user.handle} cannot cover the settlement`);
+      }
     }
     for (const [user, change] of net) {
       if (change > 0 && user.balance > MAX_BALANCE - change) {
@@ -68,7 +72,7 @@ export function createSettlement(ctx: Ctx): Result {
       }
     }
 
-    const committedAt = nextTs(st);
+    const committedAt = now.ts;
     const id = newId('st', (sid) => st.settlements.has(sid));
     const payments = transfers.map((t) => recordPayment(st, { ...t, settlementId: id, createdAt: committedAt }));
     for (const [user, change] of net) user.balance += change;

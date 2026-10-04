@@ -162,7 +162,7 @@ export function importState(body: JsonObject): State {
       id: p.id as string, fromUserId: p.from_user_id as string, toUserId: p.to_user_id as string,
       amount: p.amount as number, note: p.note as string, visibility: p.visibility as Visibility,
       requestId: p.request_id as string | null, settlementId: p.settlement_id as string | null,
-      createdAt: p.created_at as string, seq: p.seq as number,
+      authorizationId: null, createdAt: p.created_at as string, seq: p.seq as number,
     });
   });
 

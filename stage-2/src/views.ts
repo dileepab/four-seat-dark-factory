@@ -1,6 +1,9 @@
 // Response representations (plan 3.6): exactly these fields, identical wherever they appear.
 
-import type { PayRequest, Payment, Split, State } from './state.ts';
+import {
+  remainingAt, statusAt,
+  type Authorization, type PayRequest, type Payment, type Split, type State,
+} from './state.ts';
 
 function handleOf(st: State, userId: string): string {
   return st.users.get(userId)?.handle ?? '';
@@ -19,6 +22,7 @@ export function paymentView(st: State, p: Payment): Record<string, unknown> {
     visibility: p.visibility,
     request_id: p.requestId,
     settlement_id: p.settlementId,
+    authorization_id: p.authorizationId,
     created_at: p.createdAt,
   };
 }
@@ -48,6 +52,28 @@ export function splitView(st: State, s: Split): Record<string, unknown> {
     shares: s.shares.map((share) => ({ handle: share.handle, amount: share.amount })),
     requests: s.requestIds.map((id) => requestView(st, st.requestsById.get(id)!)),
     created_at: s.createdAt,
+  };
+}
+
+// The authorization as a read at `nowMs` sees it (plan 3.6, D51).
+export function authorizationView(st: State, a: Authorization, nowMs: number): Record<string, unknown> {
+  return {
+    authorization_id: a.id,
+    from_user_id: a.fromUserId,
+    from_handle: handleOf(st, a.fromUserId),
+    to_user_id: a.toUserId,
+    to_handle: handleOf(st, a.toUserId),
+    amount: a.amount,
+    captured_amount: a.capturedAmount,
+    remaining_amount: remainingAt(a, nowMs),
+    currency: st.currency,
+    note: a.note,
+    visibility: a.visibility,
+    status: statusAt(a, nowMs),
+    expires_at: a.expiresAt,
+    payment_id: a.paymentId,
+    payment_ids: [...a.paymentIds],
+    created_at: a.createdAt,
   };
 }
 

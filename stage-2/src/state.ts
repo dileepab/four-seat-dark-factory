@@ -8,13 +8,17 @@ import { randomBytes } from 'node:crypto';
 
 export type Visibility = 'public' | 'private';
 export type RequestStatus = 'pending' | 'paid' | 'declined' | 'cancelled';
+export type AuthorizationStatus = 'open' | 'captured' | 'voided' | 'expired';
 
 export const VISIBILITIES: readonly string[] = ['public', 'private'];
 export const REQUEST_STATUSES: readonly string[] = ['pending', 'paid', 'declined', 'cancelled'];
+export const AUTHORIZATION_STATUSES: readonly string[] = ['open', 'captured', 'voided', 'expired'];
 
 // The largest balance any operation may produce (spec §4: no balance outside ±2^53).
 export const MAX_BALANCE = 2 ** 53;
 export const MAX_AMOUNT = 1_000_000_000;
+export const DEFAULT_TTL = 600; // seconds, before any reset sets authorization_ttl_seconds
+export const MAX_TTL = 10_000_000_000;
 
 export interface PasswordHash {
   alg: 'scrypt';
@@ -45,6 +49,7 @@ export interface Payment {
   visibility: Visibility;
   requestId: string | null;
   settlementId: string | null;
+  authorizationId: string | null; // the authorization a capture took this payment from
   createdAt: string;
   seq: number;
 }
@@ -85,6 +90,26 @@ export interface Settlement {
   seq: number;
 }
 
+// A hold on the payer's wallet (stage-2 "Authorizations and captures"). The stored status is
+// what an event set; an open authorization whose expiry has passed reads `expired` (statusAt).
+export interface Authorization {
+  id: string;
+  fromUserId: string; // the payer, whose funds are held
+  toUserId: string; // the receiver, who captures
+  amount: number;
+  capturedAmount: number;
+  note: string;
+  visibility: Visibility;
+  status: AuthorizationStatus;
+  expiresAt: string; // exactly as issued or seeded
+  expiresMs: number; // its instant, whole milliseconds rounded up (time.ts)
+  paymentId: string | null; // the latest capture
+  paymentIds: string[]; // every capture, in order
+  createdAt: string;
+  closedAt: string | null; // when a void or a capture closed it; null while open and for clock expiry
+  seq: number;
+}
+
 // A completed idempotent call: the parsed body and the exact response it produced.
 export interface IdemRecord {
   userId: string;
@@ -108,6 +133,10 @@ export interface State {
   requestsById: Map<string, PayRequest>;
   splits: Map<string, Split>;
   settlements: Map<string, Settlement>;
+  authorizationTtl: number; // seconds
+  authorizations: Authorization[]; // creation order
+  authorizationsById: Map<string, Authorization>;
+  holds: Map<string, Set<Authorization>>; // payer id -> stored-open authorizations (see heldBy)
   operators: Set<string>;
   idem: Map<string, IdemRecord>; // see idempotency.ts for the map key
   seq: number; // creation counter, the tie-break for equal timestamps
@@ -128,6 +157,10 @@ export function emptyState(): State {
     requestsById: new Map(),
     splits: new Map(),
     settlements: new Map(),
+    authorizationTtl: DEFAULT_TTL,
+    authorizations: [],
+    authorizationsById: new Map(),
+    holds: new Map(),
     operators: new Set(),
     idem: new Map(),
     seq: 0,
@@ -152,6 +185,20 @@ export function nextTs(st: State): string {
   const now = formatTs(Date.now());
   if (now > st.lastTs) st.lastTs = now;
   return st.lastTs;
+}
+
+// The service clock (D49): the later of the wall clock and the last issued timestamp. Every
+// operation, reads included, takes it once at its start and judges expiry by it. Recording
+// it as issued keeps it from ever running backwards within a state, so an authorization
+// that reads expired once reads expired at every later read.
+export interface Now {
+  ts: string;
+  ms: number;
+}
+
+export function clock(st: State): Now {
+  const ts = nextTs(st);
+  return { ts, ms: Date.parse(ts) };
 }
 
 export function nextSeq(st: State): number {
@@ -181,4 +228,50 @@ export function addPayment(st: State, payment: Payment): void {
 export function addRequest(st: State, request: PayRequest): void {
   st.requests.push(request);
   st.requestsById.set(request.id, request);
+}
+
+export function addAuthorization(st: State, a: Authorization): void {
+  st.authorizations.push(a);
+  st.authorizationsById.set(a.id, a);
+  if (a.status === 'open') {
+    let open = st.holds.get(a.fromUserId);
+    if (!open) st.holds.set(a.fromUserId, (open = new Set()));
+    open.add(a);
+  }
+}
+
+// The status a read at `nowMs` shows: an open authorization is expired from its deadline on.
+export function statusAt(a: Authorization, nowMs: number): AuthorizationStatus {
+  return a.status === 'open' && nowMs >= a.expiresMs ? 'expired' : a.status;
+}
+
+// What the authorization still holds at `nowMs`: the uncaptured remainder while open, else 0.
+export function remainingAt(a: Authorization, nowMs: number): number {
+  return statusAt(a, nowMs) === 'open' ? a.amount - a.capturedAmount : 0;
+}
+
+// Close an open authorization (a final or full capture, or a void): it holds nothing from now on.
+export function closeAuthorization(st: State, a: Authorization, status: 'captured' | 'voided', ts: string): void {
+  a.status = status;
+  a.closedAt = ts;
+  st.holds.get(a.fromUserId)?.delete(a);
+}
+
+// The sum of the user's open holds at `nowMs`. An authorization past its deadline holds
+// nothing and, the clock never running backwards, never will again, so it leaves the index;
+// its stored status stays `open` (closed_at null: the deadline is its closing time).
+export function heldBy(st: State, userId: string, nowMs: number): number {
+  const open = st.holds.get(userId);
+  if (!open) return 0;
+  let held = 0;
+  for (const a of open) {
+    if (nowMs >= a.expiresMs) open.delete(a);
+    else held += a.amount - a.capturedAmount;
+  }
+  return held;
+}
+
+// What the user can spend at `nowMs`: total minus held, never negative (I30, I31).
+export function availableOf(st: State, user: User, nowMs: number): number {
+  return user.balance - heldBy(st, user.id, nowMs);
 }

@@ -2,13 +2,14 @@
 
 import { invalid } from './errors.ts';
 import { cpLength, emailKey, HANDLE_RE, isEmail } from './fields.ts';
-import { isObject, type JsonObject } from './json.ts';
+import { has, isObject, type JsonObject } from './json.ts';
 import { hashPassword, SEED_COST } from './passwords.ts';
 import {
-  addPayment, addRequest, addUser, emptyState, MAX_AMOUNT, MAX_BALANCE, nextSeq, nextTs,
-  REQUEST_STATUSES, VISIBILITIES,
-  type RequestStatus, type State, type Visibility,
+  addAuthorization, addPayment, addRequest, addUser, AUTHORIZATION_STATUSES, DEFAULT_TTL, emptyState, formatTs,
+  MAX_AMOUNT, MAX_BALANCE, MAX_TTL, nextSeq, REQUEST_STATUSES, VISIBILITIES,
+  type AuthorizationStatus, type RequestStatus, type State, type Visibility,
 } from './state.ts';
+import { rfc3339Ms } from './time.ts';
 
 const MAX_USERS = 1000;
 
@@ -30,6 +31,7 @@ interface SeedPayment {
   visibility: Visibility;
   requestId: string | null;
   settlementId: string | null;
+  authorizationId: string | null;
 }
 
 interface SeedRequest {
@@ -42,12 +44,29 @@ interface SeedRequest {
   paymentId: string | null;
 }
 
+interface SeedAuthorization {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: number;
+  capturedAmount: number;
+  note: string;
+  visibility: Visibility;
+  status: AuthorizationStatus;
+  expiresAt: string;
+  expiresMs: number;
+  paymentId: string | null;
+  paymentIds: string[];
+}
+
 interface Fixture {
   currency: string;
   minorUnits: number;
+  ttl: number;
   users: SeedUser[];
   payments: SeedPayment[];
   requests: SeedRequest[];
+  authorizations: SeedAuthorization[];
   operators: string[];
 }
 
@@ -83,7 +102,13 @@ function optionalRef(v: unknown, what: string): string | null {
   return v as string;
 }
 
-export function validateFixture(body: JsonObject): Fixture {
+function absent(v: unknown): boolean {
+  return v === undefined || v === null;
+}
+
+// Validate everything against the reset's own time `resetMs` (the seeded holds that count are
+// the ones still open then). Nothing here touches the live state.
+export function validateFixture(body: JsonObject, resetMs: number): Fixture {
   check(typeof body.currency === 'string' && /^[A-Z]{3}$/.test(body.currency), 'currency must be three capital letters');
   check(isInt(body.minor_units) && [0, 2, 3].includes(body.minor_units), 'minor_units must be 0, 2 or 3');
 
@@ -133,6 +158,7 @@ export function validateFixture(body: JsonObject): Fixture {
       amount: o.amount as number, note: optionalString(o.note, `${what}.note`),
       visibility: visibility as Visibility, requestId: optionalRef(o.request_id, `${what}.request_id`),
       settlementId: optionalRef(o.settlement_id, `${what}.settlement_id`),
+      authorizationId: optionalRef(o.authorization_id, `${what}.authorization_id`),
     };
   });
 
@@ -161,28 +187,94 @@ export function validateFixture(body: JsonObject): Fixture {
     return id as string;
   });
 
-  return { currency: body.currency as string, minorUnits: body.minor_units as number, users, payments, requests, operators };
+  // Present means an integral number of seconds from 1 to 10^10 (600.0 is 600; null is not absent).
+  let ttl = DEFAULT_TTL;
+  if (has(body, 'authorization_ttl_seconds')) {
+    const v = body.authorization_ttl_seconds;
+    check(isInt(v) && v >= 1 && v <= MAX_TTL, `authorization_ttl_seconds must be an integer from 1 to ${MAX_TTL}`);
+    ttl = v as number;
+  }
+
+  const authorizationIds = new Set<string>();
+  const held = new Map<string, number>(); // payer id -> remainders still open at the reset's time
+  const authorizations: SeedAuthorization[] = optionalArray(body, 'authorizations').map((a, i) => {
+    const what = `authorizations[${i}]`;
+    check(isObject(a), `${what} must be an object`);
+    const o = a as JsonObject;
+    check(isId(o.id) && !authorizationIds.has(o.id), `${what}.id must be a unique string of 1 to 64 characters`);
+    check(typeof o.from_user_id === 'string' && ids.has(o.from_user_id), `${what}.from_user_id must name a user`);
+    check(typeof o.to_user_id === 'string' && ids.has(o.to_user_id), `${what}.to_user_id must name a user`);
+    check(o.from_user_id !== o.to_user_id, `${what} must be between two different users`);
+    check(isInt(o.amount) && o.amount >= 0 && o.amount <= MAX_AMOUNT, `${what}.amount must be an integer from 0 to ${MAX_AMOUNT}`);
+    const amount = o.amount as number;
+    const status = absent(o.status) ? 'open' : o.status;
+    check(typeof status === 'string' && AUTHORIZATION_STATUSES.includes(status), `${what}.status must be open, captured, voided or expired`);
+    const captured = absent(o.captured_amount) ? (status === 'captured' ? amount : 0) : o.captured_amount;
+    check(isInt(captured) && captured >= 0 && captured <= amount, `${what}.captured_amount must be an integer from 0 to amount`);
+    check(status !== 'open' || (captured as number) < amount, `${what} is open and must leave something to capture`);
+    const visibility = absent(o.visibility) ? 'public' : o.visibility;
+    check(typeof visibility === 'string' && VISIBILITIES.includes(visibility), `${what}.visibility must be public or private`);
+    const expiresAt = o.expires_at;
+    const expiresMs = typeof expiresAt === 'string' && expiresAt.length <= 64 ? rfc3339Ms(expiresAt) : null;
+    check(expiresMs !== null, `${what}.expires_at must be an RFC 3339 date-time of at most 64 characters`);
+    // Display-only links, shown as given; each defaults from the other.
+    check(has(o, 'payment_id') ? o.payment_id === null || typeof o.payment_id === 'string' : true,
+      `${what}.payment_id must be a string or null`);
+    check(absent(o.payment_ids) || (Array.isArray(o.payment_ids) && o.payment_ids.every((id) => typeof id === 'string')),
+      `${what}.payment_ids must be an array of strings`);
+    const paymentIds = absent(o.payment_ids)
+      ? (typeof o.payment_id === 'string' ? [o.payment_id] : [])
+      : [...(o.payment_ids as string[])];
+    const paymentId = has(o, 'payment_id') ? (o.payment_id as string | null) : (paymentIds.at(-1) ?? null);
+    if (status === 'open' && (expiresMs as number) > resetMs) {
+      const from = o.from_user_id as string;
+      held.set(from, (held.get(from) ?? 0) + amount - (captured as number));
+    }
+    authorizationIds.add(o.id as string);
+    return {
+      id: o.id as string, fromUserId: o.from_user_id as string, toUserId: o.to_user_id as string,
+      amount, capturedAmount: captured as number, note: optionalString(o.note, `${what}.note`),
+      visibility: visibility as Visibility, status: status as AuthorizationStatus,
+      expiresAt: expiresAt as string, expiresMs: expiresMs as number, paymentId, paymentIds,
+    };
+  });
+  for (const u of users) {
+    check((held.get(u.id) ?? 0) <= u.balance, `the open authorizations of ${u.id} hold more than its balance`);
+  }
+
+  return {
+    currency: body.currency as string, minorUnits: body.minor_units as number, ttl,
+    users, payments, requests, authorizations, operators,
+  };
 }
 
-// Hash every seeded password, then assemble the state. Nothing here touches the live state.
-export async function buildState(fixture: Fixture): Promise<State> {
+// Hash every seeded password, then assemble the state, whose clock starts at the reset's own
+// time (D49). Nothing here touches the live state.
+export async function buildState(fixture: Fixture, resetMs: number): Promise<State> {
   const hashes = await Promise.all(fixture.users.map((u) => hashPassword(u.password, SEED_COST)));
   const st = emptyState();
   st.currency = fixture.currency;
   st.minorUnits = fixture.minorUnits;
+  st.authorizationTtl = fixture.ttl;
+  st.lastTs = formatTs(resetMs);
   fixture.users.forEach((u, i) => {
     addUser(st, {
       id: u.id, email: u.email, emailKey: emailKey(u.email), password: hashes[i],
       displayName: u.displayName, handle: u.handle, balance: u.balance, seq: nextSeq(st),
     });
   });
-  // Seeded records take the reset's time; fixture order is creation order (D15).
-  const ts = nextTs(st);
+  // Seeded records take the reset's time; fixture order is creation order (D15). A seeded
+  // authorization that is already closed closed at that time too; an open one past its
+  // deadline reads expired at once.
+  const ts = st.lastTs;
   for (const p of fixture.payments) {
     addPayment(st, { ...p, createdAt: ts, seq: nextSeq(st) });
   }
   for (const r of fixture.requests) {
     addRequest(st, { ...r, createdAt: ts, seq: nextSeq(st) });
+  }
+  for (const a of fixture.authorizations) {
+    addAuthorization(st, { ...a, createdAt: ts, closedAt: a.status === 'open' ? null : ts, seq: nextSeq(st) });
   }
   for (const id of fixture.operators) st.operators.add(id);
   return st;

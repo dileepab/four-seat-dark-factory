@@ -5,7 +5,7 @@ import { ApiError, conflict, invalid, notFound } from '../errors.ts';
 import { optionalNote, optionalVisibility, paging, requireAmount, requireHandle } from '../fields.ts';
 import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { canCredit, commitTransfer } from '../ledger.ts';
-import { nextTs, store } from '../state.ts';
+import { availableOf, clock, store } from '../state.ts';
 import { newestFirst, paymentView } from '../views.ts';
 
 export function createPayment(ctx: Ctx): Result {
@@ -20,10 +20,12 @@ export function createPayment(ctx: Ctx): Result {
     const to = st.usersByHandle.get(toHandle);
     if (!to) throw notFound('no user has that handle');
     if (to.id === caller.id) throw new ApiError(422, 'self_payment', 'you cannot pay yourself');
-    if (caller.balance < amount) throw conflict('insufficient_funds', 'your balance is below the amount');
+    const now = clock(st);
+    if (availableOf(st, caller, now.ms) < amount) throw conflict('insufficient_funds', 'your available balance is below the amount');
     if (!canCredit(to, amount)) throw invalid('the payment would take the receiver above 2^53');
     const payment = commitTransfer(st, {
-      from: caller, to, amount, note, visibility, requestId: null, settlementId: null, createdAt: nextTs(st),
+      from: caller, to, amount, note, visibility, requestId: null, settlementId: null, authorizationId: null,
+      createdAt: now.ts,
     });
     return paymentView(st, payment);
   });

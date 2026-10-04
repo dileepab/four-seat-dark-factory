@@ -6,7 +6,7 @@ import { optionalNote, optionalVisibility, paging, requireAmount, requireHandle 
 import { idempotencyKey, idempotent } from '../idempotency.ts';
 import { canCredit, commitTransfer } from '../ledger.ts';
 import {
-  addRequest, newId, nextSeq, nextTs, REQUEST_STATUSES, store,
+  addRequest, availableOf, clock, newId, nextSeq, nextTs, REQUEST_STATUSES, store,
   type PayRequest, type RequestStatus, type State, type User,
 } from '../state.ts';
 import { newestFirst, paymentView, requestView } from '../views.ts';
@@ -66,12 +66,15 @@ export function payRequest(ctx: Ctx): Result {
     const request = findRequest(st, ctx.params.id);
     if (request.payerId !== caller.id) throw forbidden('only the payer may pay this request');
     if (request.status !== 'pending') throw notPending();
-    if (caller.balance < request.amount) throw conflict('insufficient_funds', 'your balance is below the amount');
+    const now = clock(st);
+    if (availableOf(st, caller, now.ms) < request.amount) {
+      throw conflict('insufficient_funds', 'your available balance is below the amount');
+    }
     const requester = st.users.get(request.requesterId)!;
     if (!canCredit(requester, request.amount)) throw invalid('the payment would take the requester above 2^53');
     const payment = commitTransfer(st, {
       from: caller, to: requester, amount: request.amount, note: request.note, visibility,
-      requestId: request.id, settlementId: null, createdAt: nextTs(st),
+      requestId: request.id, settlementId: null, authorizationId: null, createdAt: now.ts,
     });
     request.status = 'paid';
     request.paymentId = payment.id;

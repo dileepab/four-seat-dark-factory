@@ -141,7 +141,8 @@ describe('reset', () => {
     const dee = await login(port, 'dee');
     const me = await dee.get('/me');
     assert.deepEqual(me.body, {
-      user_id: 'u_dee', display_name: 'Dee', handle: 'dee', balance: 7, currency: 'JPY', minor_units: 0,
+      user_id: 'u_dee', display_name: 'Dee', handle: 'dee', balance: 7, total: 7, available: 7, held: 0,
+      currency: 'JPY', minor_units: 0,
     });
   });
 
@@ -283,7 +284,8 @@ describe('authentication on GET /me', () => {
   it('returns exactly the Me fields', async () => {
     const reply = await (await login(port, 'bob')).get('/me');
     assert.deepEqual(reply.body, {
-      user_id: 'u_bob', display_name: 'Bob', handle: 'bob', balance: 2500, currency: 'EUR', minor_units: 2,
+      user_id: 'u_bob', display_name: 'Bob', handle: 'bob', balance: 2500, total: 2500, available: 2500, held: 0,
+      currency: 'EUR', minor_units: 2,
     });
   });
 });

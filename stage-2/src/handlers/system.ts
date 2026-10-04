@@ -12,8 +12,9 @@ export function health(): Result {
 // Validate everything first, build the new state aside, then swap it in one step:
 // a rejected fixture changes nothing (I25).
 export async function reset(ctx: Ctx): Promise<Result> {
-  const fixture = validateFixture(readJson(ctx));
-  swapState(await buildState(fixture));
+  const resetMs = Date.now();
+  const fixture = validateFixture(readJson(ctx), resetMs);
+  swapState(await buildState(fixture, resetMs));
   return { status: 204 };
 }
 
