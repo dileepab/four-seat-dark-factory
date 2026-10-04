@@ -284,3 +284,19 @@ Every clause has code, so there is no product defect.
 - Special-casing grep on the W8 product diff (fixture handles, ids, `2099`, sentinel values): nothing.
 - The import validates, then makes one synchronous swap. The W8 product diff has no `await`.
 - The verifier's run covers the offline build. RUN.md is unchanged since W7 and needs nothing for W8.
+
+## W8: APPROVED @ 54acbcd31a5be2c046d9bd65ef6053268ca30538 (re-review after the E16, E17, E26, E32 block)
+
+The product is unchanged. Suite a32f7a8 changes `test_w8_export_import.py` only. The verifier reran it on 54acbcd (`run.sh --upto 8 -- -k test_w8_export_import`, 29 passed), which carries the W8 PASS over as a tests-only delta.
+
+My reruns on 54acbcd used suite a32f7a8, local servers and `test_w8_export_import.py` only (`plan_w8_rerun2.json`, log `log_w8_rerun2.txt`):
+
+| Mutant | Result |
+|---|---|
+| Clean | 29 passed |
+| E16 | Killed by `test_a_seeded_expires_at_not_in_the_service_form_round_trips_exactly`: "a_odd on A / assert '2099-06-15T0...:30.124+00:00' == '2099-06-15T1....123456+05:30'" |
+| E17 | Killed by `test_rejected_import_changes_nothing[captured above amount, captured / voided / expired]`: "expected 422 validation_failed, got 204". The teardown errors that follow come from the accepted import. |
+| E26 | Killed by `test_an_exact_deadline_hold_above_the_total_still_imports`: "expected 204 ... -> 422 'invalid export: the open authorizations of u_ada hold more than its total'" |
+| E32 | Killed by `test_a_partly_captured_hold_larger_than_the_total_round_trips`: the same 422 on the first import |
+
+The block is resolved. E31 and H02 stay recorded as above, and every other W8 finding stands.
