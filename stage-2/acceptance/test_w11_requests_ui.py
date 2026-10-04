@@ -138,7 +138,7 @@ def test_lost_pay_response_is_uncertain_and_the_retry_reuses_the_key(world, ui):
     ui.click(f"request-pay-{rid}")
     expect(ui.el("request-uncertain")).to_be_visible()
     ui.absent("request-error")
-    ui.shot("requests", "uncertain")
+    ui.shot("requests", "pay-uncertain")
     ui.click(f"request-pay-{rid}")
     expect(ui.el(f"request-item-{rid}")).to_have_attribute("data-status", "paid")
     ui.absent("request-uncertain")

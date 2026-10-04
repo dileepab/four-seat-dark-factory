@@ -123,7 +123,11 @@ def test_requests_states(world, ui):
     ui.click(f"request-pay-{r1}")
     expect(ui.el("request-error")).to_be_visible()
     state(ui, "requests", "refused")
-    ui.fault(f"/requests/{r2}/decline", "POST", "abort-before")
+    ui.fault(f"/requests/{r2}/pay", "POST", "abort-before")      # a lost payment: the money-action text (3.15)
+    ui.click(f"request-pay-{r2}")
+    expect(ui.el("request-uncertain")).to_be_visible()
+    state(ui, "requests", "pay-uncertain")
+    ui.fault(f"/requests/{r2}/decline", "POST", "abort-before")  # a lost decline: may keep a neutral text
     ui.click(f"request-decline-{r2}")
     expect(ui.el("request-uncertain")).to_be_visible()
     state(ui, "requests", "uncertain")
