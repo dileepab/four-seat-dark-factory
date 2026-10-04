@@ -8,4 +8,4 @@ The lessons from the earlier runs reached this one in a different form. They wer
 
 No human wrote or edited a note.
 
-To give another band the same start, copy these files into that band's Claude Code project memory directory, `~/.claude/projects/<project path with / as ->/memory/`, and rename `INDEX.md` to `MEMORY.md`.
+To start another band with what these seats learned, copy these files into that band's Claude Code project memory directory, `~/.claude/projects/<project path with / as ->/memory/`, and rename `INDEX.md` to `MEMORY.md`. To give it the start this run had, leave that directory empty.

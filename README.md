@@ -18,8 +18,8 @@ The band plans, builds, independently verifies and reviews a service one stage a
 | `CLAUDE.md` | Tells every seat to load the protocol and its mandate |
 | `tasks/run.md` | The exact dispatch: the only human input to the run, for all four stages |
 | `stage-1/` ... `stage-4/` | One complete, buildable service per stage. Each has a `Dockerfile`, `RUN.md`, `PLAN.md` (the planner's plan and decisions), `REVIEW.md` (the critic's entries), an acceptance suite and builder tests. All of it was written by the band |
-| `room.json` | The Band console's full-session download of the run's room |
-| `rooms/` | The same room read in full from Band's API, unchanged. See [rooms/README.md](rooms/README.md) |
+| `room.json` | The Band console's full-session download of the run's room. For a room this size the download holds only the most recent 2,600 events, from 15:50 UTC on Oct 4 (about 12 minutes into stage 4) to the end of the run |
+| `rooms/` | The console's filtered download of every message from the dispatch on, unchanged, and the whole room read from Band's API, unchanged apart from the redacted Band lease ids. See [rooms/README.md](rooms/README.md) |
 | `lessons/` | The seats' own notes (Claude Code auto-memory) from this run, copied unchanged |
 | `scripts/` | `new-stage.sh`, `harness.sh`, `check-offline.sh`, `check_mandates.py` |
 
