@@ -10,7 +10,7 @@ Supplied checks (a partial sample, used only to wire the service up): `/Users/Di
 |---|---|---|---|---|
 | W1 | builder | Foundation: container, transport, errors, reset, auth, `GET /me` | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
 | W2 | builder | Idempotency engine, payments, activity feed | ACCEPTED (PASS + APPROVED @ 2ffcbe8, suite ee19494) | 2ffcbe8 |
-| W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d); BLOCKED by critic (missing test, R29: 2^53 guard on pay) | 2455a8d |
+| W3 | builder | Requests and splits | VERIFIED (PASS @ 2455a8d, R29 test in suite 78bab0a); awaiting critic re-review | 2455a8d |
 | W4 | builder | Settlements | VERIFIED (PASS @ e143cf1); BLOCKED by critic (S18: non-object entry order, D37 fix owed by builder) | e143cf1 |
 | W5 | builder | Export and import | VERIFIED (PASS @ 295378c, suite 026f116); awaiting critic | 295378c |
 | W6 | verifier | Acceptance suite for W1–W5 and I1–I29 | HANDED_OFF (complete in outline, 1037 checks; W3-W5 parts draft-run per item) | dd3097b |
