@@ -114,6 +114,55 @@ def test_export_holds_no_plaintext_password_or_bearer_token(svc):
             assert acct.token not in snap.text, "PLAN D30: bearer values are stored only as hashes"
 
 
+def _record_holding(node, value):
+    """The innermost object that holds `value` as one of its field values."""
+    if isinstance(node, dict):
+        for v in node.values():
+            found = _record_holding(v, value)
+            if found is not None:
+                return found
+        if value in node.values():
+            return node
+    elif isinstance(node, list):
+        for v in node:
+            found = _record_holding(v, value)
+            if found is not None:
+                return found
+    return None
+
+
+def _long_strings(node, out=None) -> set[str]:
+    out = set() if out is None else out
+    if isinstance(node, dict):
+        for v in node.values():
+            _long_strings(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _long_strings(v, out)
+    elif isinstance(node, str) and len(node) >= 16:
+        out.add(node)
+    return out
+
+
+def test_equal_passwords_are_hashed_with_different_salts(svc):
+    """I12: a per-account salt. Two accounts with one password share no long string in their records."""
+    same = "the-very-same-password"
+    svc.must_reset(fixture([user("ann", 1, password=same, display_name="Ann"),
+                            user("ben", 2, password=same, display_name="Ben")]))
+    expect(svc.signup("cat@example.com", same, "Cat"), 201)
+    expect(svc.signup("dan@example.com", same, "Dan"), 201)
+    state = svc.export().body["state"]
+    records = {}
+    for email in ("ann@example.com", "ben@example.com", "cat@example.com", "dan@example.com"):
+        rec = _record_holding(state, email)
+        assert rec is not None, f"no record holds {email}; this probe cannot run"
+        records[email] = _long_strings(rec) - {email}
+    for a, b in (("ann@example.com", "ben@example.com"), ("cat@example.com", "dan@example.com")):
+        shared = records[a] & records[b]
+        assert not shared, f"{a} and {b} share stored strings (a common salt or hash?): {shared}"
+        assert records[a], f"the record of {a} holds no hash-like string"
+
+
 def test_export_is_read_only(svc):
     rich = build_rich_state(svc)
     before = observe(svc, rich["handles"])
