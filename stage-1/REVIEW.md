@@ -170,3 +170,87 @@ Correction: my BLOCK message showed only M49's added line. The mutant in `mutant
 Still open, and not blocking:
 - M05 remains a residual (see above).
 - M16 (one shared salt) moves to the W5 review, where the export must kill it.
+
+## W3: BLOCKED @ 2455a8d53ed6a8b70a72b3f6fbd47d1ad1a87f56
+
+The verifier posted PASS for W3 on this commit (suite 026f116, room message b0a26ce1): npm test 65/65, the offline build, `run.sh --upto 3` 912 passed, and the harness claims stage 1 with the two expected later-item failures.
+
+### Reason
+
+No test fails when the 2^53 guard is removed from `POST /requests/{id}/pay`. The guard is required by plan 3.10 (pay: "422 2^53 guard"), by D19, and by I9 ("No balance exceeds 2^53 (an operation that would is refused, D19)").
+
+- Mutant R29 deletes one line from `payRequest` in src/handlers/requests.ts: `if (!canCredit(requester, request.amount)) throw invalid(...)`.
+- With R29 every test still passes: npm test 65/65, and acceptance `--upto 3 -m "not container"` (suite 026f116, local server) 905 passed.
+- Repro (`.work/critic-h6bj/probe_r29.py`): reset with ada at 1000 and bob at 2^53 − 10, bob asks ada for N, and ada pays with `{}`.
+  - Clean 2455a8d: N = 11 and N = 12 both give 422 `validation_failed`, and nothing changes.
+  - R29 with N = 11: 201. bob reads 2^53, because 2^53 + 1 is not representable. ada reads 989, so the sum is one unit short of the seeded total (I1).
+  - R29 with N = 12: 201, and bob reads 2^53 + 2 (I9).
+- Why no test catches it:
+  - The guard is tested on `POST /payments` (test_w2_payments.py::test_payment_that_would_push_a_balance_past_2_53_is_422) and on `POST /settlements` (test_w4_settlements.py::test_settlement_past_2_53_is_422_and_changes_nothing).
+  - No builder or acceptance test seeds a requester near 2^53 and then pays a request.
+  - Trace row N32 lists only the payments test.
+
+### Missing evidence
+
+An acceptance test for item 3. Seed the requester at 2^53 − 10 and give the payer enough to pay. Then check:
+- Paying a request of 11 is 422 `validation_failed`. Both balances are unchanged, the request is still `pending` with `payment_id: null`, no payment with that `request_id` appears in either party's feed, and the key is unclaimed.
+- Paying a request of 10 is 201, and the requester then reads exactly 2^53.
+
+No product change is needed. When the test lands I rerun R29. A tests-only delta keeps every other result below.
+
+### Clause map (W3)
+
+| Plan clause | Code @ 2455a8d | Killing tests (mutant) |
+|---|---|---|
+| 3.10 `POST /requests`: 400 non-string `payer_handle`, 422 field rules, 404, 422 `self_request` after 404, payer balance never read, `visibility` ignored | requests.ts `createRequest`; `openRequest` (pending, `payment_id` null, no balance read) | test_w3_requests: request_precedence, request_above_the_payers_balance_is_created_and_moves_nothing, request_ignores_visibility_and_spoofed_fields |
+| 3.10 pay order: 422 visibility, 404, 403 for any non-payer (D5), 409 not pending, 409 funds, 422 guard | `payRequest` lines 65–71 | pay_precedence (R05, R06), only_the_payer_may_pay (R04), pay_with_bad_visibility_is_422; guard: none (R29) |
+| 3.10 pay effect: payment copies amount and note (D31), visibility from the body, request `paid` with `payment_id` in the same step, a 0 request is payable | `payRequest` lines 72–78, `commitTransfer` | pay_creates_a_payment_and_marks_the_request_paid (R01, R08), zero_amount_request_from_a_split_is_payable (R09) |
+| I3, I27 at most once | one synchronous callback inside `idempotent`; no `await` between the pending check and the commit | test_w3_concurrency: twenty_concurrent_pays_with_distinct_keys_pay_once (R01); builder "20 concurrent pays" (R02) |
+| 3.10 decline and cancel: no key, body never read, 404, 403, `pending` → target, repeat 200, other final 409 | `settleRequest` | terminal_states_never_change and pay_racing_decline_or_cancel_has_one_winner (R03, R34), decline_and_cancel_need_no_key_and_ignore_the_body (R25) |
+| 3.10 `GET /requests`: party scope, `direction`, `status`, empty or other case 422, paging | `listRequests` | filters_for_ada (R33), invalid_request_list_parameters_are_422 (R13, R13b), requests_are_newest_first_and_page (R35) |
+| 3.10 `POST /splits`: 400 types first, 422 rules, 404 first unknown in order, no balance check, §9 shares, one request per non-caller with share and note, one `created_at`, caller-only `[]` | splits.ts `createSplit`, `equalShares` | specification_rounding_table and extra_unit_follows_handle_order (R32), more_than_200_participants_is_422 (R19), split note (R20), split_and_its_requests_share_one_created_at (R21b), replay of the original (R36) |
+| W3.7 requests and splits never in `GET /activity` | `activity` reads `st.payments` only | test_w2_activity::test_requests_and_splits_never_appear_in_the_feed |
+
+Error paths leave state unchanged:
+- A split resolves every handle before it creates anything.
+- Pay checks everything before `commitTransfer`.
+- Decline and cancel change nothing before their 404, 403 or 409.
+
+Nothing was built beyond the spec, and there is no stage-2 code.
+
+### Mutants (22: npm test for all of them; acceptance `--upto 3 -m "not container"`, suite 026f116, for R01–R09, R21, R21b and R29)
+
+| ID | Break | Result |
+|---|---|---|
+| R01 | paying does not mark the request paid | killed: builder 20-concurrent-pays; test_twenty_concurrent_pays_with_distinct_keys_pay_once |
+| R02 | `await` between the pending check and the commit | killed: builder 20-concurrent-pays (the mutated reason); acceptance test_pay_precedence |
+| R03 | a non-pending request moves to the other final state | killed: builder decline/cancel; test_pay_racing_decline_or_cancel_has_one_winner[cancel] |
+| R04 | a non-party gets 404 on pay | killed: builder error order; test_only_the_payer_may_pay[cy] |
+| R05 | `request_not_pending` before the payer check | builder survived; killed: test_pay_precedence (a non-party paying a cancelled request expects 403) |
+| R06 | funds before `request_not_pending` | killed: builder error order; test_pay_precedence |
+| R08 | the paid payment's note is empty | killed: both suites |
+| R09 | a 0 request is not payable | killed: both suites |
+| R13, R13b | empty `direction` treated as absent; case-insensitive `status` | killed: builder paging and parameters |
+| R19 | more than 200 participants accepted | killed: builder |
+| R20 | split requests have an empty note | killed: builder |
+| R21 | each split request stamped by its own `nextTs` | survived both: equivalent in practice, because the whole split runs within one millisecond |
+| R21b | split requests stamped 1 ms after the split | killed: builder; test_split_and_its_requests_share_one_created_at |
+| R25 | decline reads the body | killed: builder |
+| R29 | no 2^53 guard on pay | **survived both: this block** |
+| R32 | the extra unit goes to the last participants | killed: builder |
+| R33 | `outgoing` also lists incoming | killed: builder |
+| R34 | cancel turns a declined request into cancelled | killed: builder |
+| R35 | listing ignores `offset` | killed: builder |
+| R36 | a split replay re-renders its requests from the current state | killed: builder |
+
+### Spec lines in W3 scope that the supplied checks never ask, and the tests that cover them
+
+- §1 "at most once" under concurrency: test_w3_concurrency, all seven tests.
+- §8 pay replay "must not return 409", "moves no additional money": test_pay_replay_is_200_never_409.
+- §8 decline twice and cancel twice are 200, and the other final states are 409 in both directions: decline_and_decline_again, cancel_and_cancel_again, terminal_states_never_change.
+- §8 `POST /requests` amount and note rules: invalid_request_amount_is_422, request_note_length, non_string_request_note_is_422.
+- §8 `GET /requests` newest first: requests_are_newest_first_and_page.
+- §8 split `shares` cover the caller and `requests` keep the order: caller_in_the_middle_keeps_order.
+- §9 every table row: specification_rounding_table.
+- §4 money arriving later makes the same request payable: paying_while_short_is_409_and_payable_later.
+- §4 "no operation produces a balance outside ±2^53", on the pay path: **no test**. This is the block above.
