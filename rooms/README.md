@@ -6,16 +6,16 @@ The whole run happened in one BAND room, `7884df0c-298f-4120-abce-f6bef24337b9`.
 
 | File | What it is | Events | Covers |
 |---|---|---|---|
-| `../room.json` | The Band console's **Download full session**, saved unchanged apart from the redaction below | 2,600 | 15:50 to 19:17 UTC on Oct 4: from about 12 minutes into stage 4 (part 4 of the stage-4 handoff) to the end of the run |
+| `../room.json` | The Band console's **Download full session**, saved unchanged apart from the redaction below | 10,347 | Everything, from the seats joining at 06:17 UTC on Oct 4 to the last event at 19:17 UTC |
 | `7884df0c-console-filtered.json` | The Band console's **Download filtered**, with the event types set to messages and system events, saved unchanged | 286 | The whole run: every message from the dispatch at 06:18 UTC to the final report at 18:44 UTC |
 | `7884df0c-api.jsonl` | The whole room read page by page from Band's API with `band room messages <room> --json --page N`, after the run | 10,347 | Everything, from the seats joining at 06:17 UTC to the last event at 19:17 UTC |
 
 **Why three files.**
-- The console's full-session download of a room this size holds only its most recent 2,600 events. `room.json` is that download, as the participant guide asks, so it starts in stage 4. We have reported this to the BAND team.
+- `room.json` is the log the participant guide asks for. The console's full-session download holds the events the console has loaded, so the room was scrolled back to its first event before the download. A download taken without that held only the most recent 2,600 events, from stage 4 on; we reported this to the BAND team.
 - The filtered download is the same console export with tool calls, tool results and thoughts left out. It shows every message the seats and the human wrote, from the dispatch on.
-- The API read has every event. Each line is one message object exactly as the API returned it, sorted by `inserted_at`. Its field names are the API's (`sender_name`, `message_type`, `inserted_at`), not the console's. Every event in `room.json` is also in it.
+- The API read is an independent copy of the whole room. Each line is one message object exactly as the API returned it, sorted by `inserted_at`. Its field names are the API's (`sender_name`, `message_type`, `inserted_at`), not the console's. It holds the same 10,347 event ids as `room.json`.
 
-| Event type (API read) | Count |
+| Event type (`room.json` and the API read) | Count |
 |---|---|
 | `tool_call` | 4,558 |
 | `tool_result` | 4,558 |
@@ -36,6 +36,6 @@ The seats' tool calls carry the ids of their Band receiver leases (`jrx_…`). T
 
 ## Finding the evidence
 
-- **The dispatch:** the only `text` message from `Dileepa Balasuriya`, at 06:18:19 UTC on Oct 4. It is in the filtered download and the API read.
+- **The dispatch:** the only `text` message from `Dileepa Balasuriya`, at 06:18:19 UTC on Oct 4. It is in all three files.
 - **Stage reports and the final report:** `text` messages from `planner-h6bf` that start with `STAGE N REPORT` or `FINAL REPORT`. The final report is at 18:44:11 UTC.
 - **Verdicts:** `text` messages that start with `VERDICT` (critic-h6bj) or carry `PASS` (verifier-h6bh), each naming a full commit hash.

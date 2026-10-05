@@ -115,8 +115,8 @@ What the suite missed was found by the critic's plan and code reviews, probes an
 - **Dispatch:** Oct 4, 2026, 11:48 IST (06:18 UTC). One message, [`tasks/run.md`](tasks/run.md), for all four stages.
 - **Final report:** Oct 5, 00:14 IST (18:44 UTC).
 - **Room:** one Band room, `7884df0c-298f-4120-abce-f6bef24337b9`, with 10,347 events.
-  - [`room.json`](room.json) is the console's full-session download. For a room this size it holds only the most recent 2,600 events, from 15:50 UTC, about 12 minutes into stage 4.
-  - [`rooms/`](rooms/) holds the console's filtered download of every message from the dispatch on, and the complete API read of the room ([rooms/README.md](rooms/README.md)).
+  - [`room.json`](room.json) is the console's full-session download: all 10,347 events, from the seats joining (06:17 UTC) to the end of the run.
+  - [`rooms/`](rooms/) holds two cross-checks: the console's filtered download of every message, and the complete API read of the room ([rooms/README.md](rooms/README.md)).
 
 | Stage | Working time | Final commit | Shipped checks (isolated) | Acceptance suite | Builder tests | Items | Decisions |
 |---|---|---|---|---|---|---|---|
